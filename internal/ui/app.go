@@ -53,6 +53,16 @@ type chatEditSnapshotMsg struct {
 	record editRecord
 	c      chan tea.Msg
 }
+type chatToolCallMsg struct {
+	toolName string
+	args     string
+	c        chan tea.Msg
+}
+type chatToolResultMsg struct {
+	toolName string
+	result   string
+	c        chan tea.Msg
+}
 
 func syncTick() tea.Cmd {
 	return tea.Tick(30*time.Second, func(time.Time) tea.Msg {
@@ -108,6 +118,22 @@ type App struct {
 	compactPending    bool
 	userCommands      []usercommands.Command
 	responseStyle     agent.ResponseStyle
+
+	// New enhanced UI fields
+	toolCardRegistry  *toolBodyRegistry
+	streamFade        *streamingFadeState
+	streamingTool     *streamingToolCall
+	sidebar           *Sidebar
+	planPanel         *PlanPanel
+	permissionPrompt  *permissionPrompt
+	askUserState      *askUserState
+	renderCache       *renderCache
+	// Unwired component fields (created but need integration)
+	viewport          *viewport
+	flushBatcher      *flushBatcher
+	hoverManager      *hoverManager
+	bgTerminalManager *bgTerminalManager
+	planStepDetail    *planStepDetail
 }
 
 // SetProgram wires the Bubble Tea program back into the app so background
@@ -173,6 +199,8 @@ func NewApp(cfg *config.Config, store storage.SessionStore) App {
 	}
 
 	styles := buildStyles(themeFor(themeName))
+	planPanel := NewPlanPanel()
+	sidebar := NewSidebar(planPanel)
 
 	return App{
 		cfg:           cfg,
@@ -192,6 +220,19 @@ func NewApp(cfg *config.Config, store storage.SessionStore) App {
 		log: []logEntry{
 			{Kind: "system", Text: "Welcome to cli_mate. Press / to open commands, choose /provider, then follow the setup.", Time: time.Now()},
 		},
+
+	// New enhanced UI
+	toolCardRegistry: newDefaultToolBodyRegistry(),
+	streamFade:       newStreamingFade(styles.accent.GetForeground(), styles.muted.GetForeground()), // lipgloss.TerminalColor is compatible
+	planPanel:        planPanel,
+	sidebar:          sidebar,
+	renderCache:      newRenderCache(30*time.Second, 200),
+	// New wired components
+	viewport:          newViewport(),
+	flushBatcher:      newFlushBatcher(),
+	hoverManager:      newHoverManager(),
+	bgTerminalManager: newBGTerminalManager(),
+	planStepDetail:    newPlanStepDetail(),
 	}
 }
 
@@ -211,6 +252,33 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chatStepMsg:
 		a.log = append(a.log, msg.entry)
 		a.completedStepText = msg.entry.Text
+		// Update streaming tool state
+		if msg.entry.Kind == "tool" {
+			a.streamingTool = &streamingToolCall{
+				name: parseToolName(msg.entry.Text),
+				args: msg.entry.Text,
+			}
+			path := parseToolPath(msg.entry.Text)
+			if path != "" {
+				a.streamingTool.path = path
+			}
+		}
+		return a, waitForChatMsg(msg.c)
+	case chatToolCallMsg:
+		a.streamingTool = &streamingToolCall{
+			name: msg.toolName,
+			args: msg.args,
+		}
+		path := streamingFilePath(msg.args)
+		if path != "" {
+			a.streamingTool.path = path
+		}
+		return a, waitForChatMsg(msg.c)
+	case chatToolResultMsg:
+		if a.streamingTool != nil && a.streamingTool.name == msg.toolName {
+			a.streamingTool.completed = true
+			a.streamingTool.content = msg.result
+		}
 		return a, waitForChatMsg(msg.c)
 	case chatEditSnapshotMsg:
 		a.editHistory = append(a.editHistory, msg.record)
@@ -220,13 +288,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, waitForChatMsg(msg.c)
 	case chatApprovalRequestMsg:
 		a.pendingApproval = &approvalRequest{call: msg.call, response: msg.response}
-		a.appendLog("system", approvalPrompt(msg.call))
-		// No need to re-arm waitForChatMsg: the request arrived via
-		// program.Send, not the streaming channel. The approval response
-		// comes back through the response channel when answerApproval runs.
+		a.permissionPrompt = newPermissionPrompt(msg.call)
+		a.appendLog("system", approvalPromptOld(msg.call))
 		return a, nil
 	case chatStreamMsg:
 		a.streamBuffer += msg.token
+		a.streamFade.addToken(msg.token)
 		const maxStreamPreviewBytes = 1000
 		if len(a.streamBuffer) > maxStreamPreviewBytes {
 			a.streamBuffer = a.streamBuffer[len(a.streamBuffer)-maxStreamPreviewBytes:]
@@ -247,8 +314,20 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.completedStepText = ""
 		a.streamBuffer = ""
 		a.tokensUsed = 0
+		a.streamingTool = nil
+		a.streamFade.clear()
 		a.messages = msg.messages
 		a.persistMessages(msg.messages, previousMessageCount)
+		// Update sidebar
+		if a.sidebar != nil {
+			profile, _ := a.cfg.Active()
+			a.sidebar.SetSessionInfo(SessionInfo{
+				Provider: profile.Provider,
+				Model:    profile.Model,
+				Messages: len(msg.messages),
+			})
+			a.sidebar.SetTouchedFiles(touchedFilesFromLog(a.log))
+		}
 		return a, syncFilesCmd(a.workspaceRoot, 5000)
 	case filesSyncedMsg:
 		if slices.Equal(a.files, msg) {
@@ -273,9 +352,20 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 		}
+		if a.askUserState != nil && a.askUserState.active {
+			result, finished := a.askUserState.handleKey(msg.String())
+			if finished {
+				a.inputMode = ""
+				a.askUserState = nil
+				if result != "" {
+					a.setInput(result)
+					_ = a.submit()
+				}
+			}
+			return a, nil
+		}
 
 		if msg.Paste {
-			// Collect paste buffer, don't auto-submit on newlines
 			text := string(msg.Runes)
 			a.insertText(text)
 			a.selected = 0
@@ -283,7 +373,6 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 
-		// If we were collecting a paste and got a non-paste key, finalize paste
 		if a.isPasting {
 			a.isPasting = false
 		}
@@ -344,11 +433,19 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.selected = 0
 			return a, nil
 		case "ctrl+v":
-			// Read from system clipboard
 			a.pasteFromClipboard()
 			a.selected = 0
+		case "ctrl+b":
+			// Toggle sidebar
+			if a.sidebar != nil {
+				a.sidebar.Toggle()
+			}
+		case "ctrl+d":
+			// Toggle detailed transcript
+			if a.sidebar != nil {
+				a.sidebar.Toggle()
+			}
 		default:
-			// Single character input
 			if len(msg.String()) == 1 {
 				a.insertText(msg.String())
 				a.selected = 0
@@ -360,12 +457,54 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		renderer, err := NewRenderer(max(40, msg.Width-8))
 		a.renderer = renderer
 		a.err = err
+		// Clear render cache on resize
+		if a.renderCache != nil {
+			a.renderCache.clear()
+		}
 	case tea.MouseMsg:
 		switch msg.Button {
 		case tea.MouseButtonWheelUp:
-			a.scrollUp()
+			if a.viewport != nil {
+				a.viewport.scrollUp()
+			} else {
+				a.scrollUp()
+			}
 		case tea.MouseButtonWheelDown:
-			a.scrollDown()
+			if a.viewport != nil {
+				a.viewport.scrollDown()
+			} else {
+				a.scrollDown()
+			}
+		default:
+			if isMouseClick(msg) && a.hoverManager != nil {
+				action := a.hoverManager.handleClick()
+				if strings.HasPrefix(action, "plan_step_click:") {
+					parts := strings.SplitN(action, ":", 2)
+					if len(parts) == 2 && parts[1] != "" {
+						stepIdx := 0
+						fmt.Sscanf(parts[1], "%d", &stepIdx)
+						if a.planPanel != nil && stepIdx < len(a.planPanel.steps) {
+							works := captureWorkFromLog(a.log)
+							a.planStepDetail.show(stepIdx, a.planPanel.steps[stepIdx].Title, works)
+						}
+					}
+				}
+			}
+			if isMouseHover(msg) && a.hoverManager != nil && a.sidebar != nil {
+				planSteps := 0
+				if a.planPanel != nil {
+					planSteps = len(a.planPanel.steps)
+				}
+				touchedFiles := 0
+				a.hoverManager.updateHover(
+					msg.Y,
+					len(a.log),
+					planSteps,
+					touchedFiles,
+					a.sidebar.IsVisible(),
+					a.planPanel != nil && a.planPanel.IsVisible(),
+				)
+			}
 		}
 	}
 	return a, nil
@@ -433,7 +572,7 @@ func (a *App) persistMessages(messages []providers.Message, alreadyPersisted int
 	}
 }
 
-func approvalPrompt(call tools.Call) string {
+func approvalPromptOld(call tools.Call) string {
 	label := call.Name
 	path, _ := call.Argument["path"].(string)
 	if strings.TrimSpace(path) != "" {
@@ -453,8 +592,61 @@ func (a *App) handleApprovalKey(msg tea.KeyMsg) bool {
 
 	key := strings.ToLower(msg.String())
 	call := a.pendingApproval.call
+
+	// Try permission prompt first
+	if a.permissionPrompt != nil && a.permissionPrompt.active {
+		choice, resolved := a.permissionPrompt.handleKey(key)
+		if resolved {
+			a.permissionPrompt = nil
+			switch choice {
+			case "allow":
+				a.answerApproval(true, "Tool approved.")
+				return true
+			case "deny":
+				a.answerApproval(false, "Tool denied.")
+				return true
+			case "always_allow_tool":
+				_ = a.cfg.UpdateActive(func(profile *config.Profile) {
+					found := false
+					for _, t := range profile.AllowedTools {
+						if t == call.Name {
+							found = true
+						}
+					}
+					if !found {
+						profile.AllowedTools = append(profile.AllowedTools, call.Name)
+					}
+				})
+				a.saveSettings()
+				a.answerApproval(true, fmt.Sprintf("Tool %q approved and whitelisted.", call.Name))
+				return true
+			case "always_allow_dir":
+				path, _ := call.Argument["path"].(string)
+				if strings.TrimSpace(path) != "" {
+					dir := filepath.Dir(path)
+					_ = a.cfg.UpdateActive(func(profile *config.Profile) {
+						found := false
+						for _, p := range profile.AllowedPaths {
+							if p == dir {
+								found = true
+							}
+						}
+						if !found {
+							profile.AllowedPaths = append(profile.AllowedPaths, dir)
+						}
+					})
+					a.saveSettings()
+					a.answerApproval(true, fmt.Sprintf("Tool approved. Directory %q whitelisted.", dir))
+					return true
+				}
+				return false
+			}
+		}
+		return true
+	}
+
+	// Fallback to old key handling
 	pathStr, _ := call.Argument["path"].(string)
-	
 	switch key {
 	case "y", "enter":
 		a.answerApproval(true, "Tool approved.")
@@ -511,6 +703,7 @@ func (a *App) handleApprovalKey(msg tea.KeyMsg) bool {
 func (a *App) answerApproval(allowed bool, message string) {
 	pending := a.pendingApproval
 	a.pendingApproval = nil
+	a.permissionPrompt = nil
 	if pending != nil {
 		pending.response <- allowed
 	}

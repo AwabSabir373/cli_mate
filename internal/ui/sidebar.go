@@ -5,12 +5,12 @@ import (
 	"strings"
 )
 
-// Sidebar displays session info, file context, and other metadata.
+// Sidebar displays session info, touched files, and plan in a right-side panel.
 type Sidebar struct {
 	visible      bool
 	sessionInfo  SessionInfo
-	files        []string
 	planPanel    *PlanPanel
+	touchedFiles []touchedFile
 }
 
 // SessionInfo contains information about the current session.
@@ -19,6 +19,7 @@ type SessionInfo struct {
 	Model    string
 	Branch   string
 	Style    string
+	Messages int
 }
 
 // NewSidebar creates a new sidebar.
@@ -49,9 +50,17 @@ func (s *Sidebar) SetSessionInfo(info SessionInfo) {
 	s.sessionInfo = info
 }
 
-// SetFiles updates the file list.
-func (s *Sidebar) SetFiles(files []string) {
-	s.files = files
+// SetTouchedFiles updates the touched files list.
+func (s *Sidebar) SetTouchedFiles(files []touchedFile) {
+	s.touchedFiles = files
+}
+
+// hasContent returns true if the sidebar has any content to show.
+func (s *Sidebar) hasContent() bool {
+	return s.sessionInfo.Provider != "" ||
+		s.sessionInfo.Model != "" ||
+		(s.planPanel != nil && s.planPanel.IsVisible()) ||
+		len(s.touchedFiles) > 0
 }
 
 // Render produces the sidebar view.
@@ -60,8 +69,8 @@ func (s *Sidebar) Render(width int, height int, styles appStyles) string {
 		return ""
 	}
 
- sidebarWidth := 30
-	if width < 60 {
+	sidebarWidth := width
+	if sidebarWidth < 20 {
 		sidebarWidth = 20
 	}
 
@@ -75,23 +84,27 @@ func (s *Sidebar) Render(width int, height int, styles appStyles) string {
 
 	// Plan panel section
 	if s.planPanel != nil && s.planPanel.IsVisible() {
-		section := s.planPanel.Render(sidebarWidth, styles)
-		if section != "" {
-			sections = append(sections, section)
+		planSection := s.planPanel.Render(sidebarWidth-4, styles)
+		if planSection != "" {
+			sections = append(sections, planSection)
 		}
 	}
 
-	// Files section (limited to prevent overflow)
-	if len(s.files) > 0 {
-		section := s.renderFiles(10, styles)
-		if section != "" {
-			sections = append(sections, section)
+	// Touched files section
+	if len(s.touchedFiles) > 0 {
+		filesSection := renderTouchedFiles(s.touchedFiles, 8, styles)
+		if filesSection != "" {
+			sections = append(sections, filesSection)
 		}
+	}
+
+	if len(sections) == 0 {
+		return ""
 	}
 
 	content := strings.Join(sections, "\n\n")
 
-	// Pad to fill height
+	// Pad to fill height if needed
 	lines := strings.Split(content, "\n")
 	for len(lines) < height-2 {
 		lines = append(lines, "")
@@ -106,39 +119,23 @@ func (s *Sidebar) Render(width int, height int, styles appStyles) string {
 
 func (s *Sidebar) renderSessionInfo(styles appStyles) string {
 	var lines []string
-	lines = append(lines, styles.muted.Render("Session"))
+	lines = append(lines, styles.sidebarTitle.Render("Session"))
 	lines = append(lines, "")
 
 	if s.sessionInfo.Provider != "" {
-		lines = append(lines, "Provider: "+s.sessionInfo.Provider)
+		lines = append(lines, styles.muted.Render("Provider:")+" "+s.sessionInfo.Provider)
 	}
 	if s.sessionInfo.Model != "" {
-		lines = append(lines, "Model: "+s.sessionInfo.Model)
+		lines = append(lines, styles.muted.Render("Model:")+" "+s.sessionInfo.Model)
 	}
 	if s.sessionInfo.Branch != "" {
-		lines = append(lines, "Branch: "+s.sessionInfo.Branch)
+		lines = append(lines, styles.muted.Render("Branch:")+" "+s.sessionInfo.Branch)
 	}
 	if s.sessionInfo.Style != "" {
-		lines = append(lines, "Style: "+s.sessionInfo.Style)
+		lines = append(lines, styles.muted.Render("Style:")+" "+s.sessionInfo.Style)
 	}
-
-	return strings.Join(lines, "\n")
-}
-
-func (s *Sidebar) renderFiles(maxFiles int, styles appStyles) string {
-	var lines []string
-	lines = append(lines, styles.muted.Render("Files"))
-	lines = append(lines, "")
-
-	shown := s.files
-	if len(shown) > maxFiles {
-		shown = shown[:maxFiles]
-	}
-	for _, f := range shown {
-		lines = append(lines, "  "+f)
-	}
-	if len(s.files) > maxFiles {
-		lines = append(lines, styles.muted.Render(fmt.Sprintf("  ... +%d more", len(s.files)-maxFiles)))
+	if s.sessionInfo.Messages > 0 {
+		lines = append(lines, styles.muted.Render(fmt.Sprintf("Messages: %d", s.sessionInfo.Messages)))
 	}
 
 	return strings.Join(lines, "\n")

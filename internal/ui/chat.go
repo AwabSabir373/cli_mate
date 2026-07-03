@@ -217,6 +217,14 @@ func runChatAsync(parent context.Context, app *App, profile config.Profile, prov
 			entry := logEntry{Kind: step.Kind, Text: step.Text, Time: time.Now()}
 			c <- chatStepMsg{entry: entry, c: c}
 			c <- chatLoadingStepMsg{text: step.Text, c: c}
+
+			// Send tool call message for streaming UI
+			if step.Kind == "tool" {
+				toolName := parseToolName(step.Text)
+				if toolName != "" && isFileWritingTool(toolName) {
+					c <- chatToolCallMsg{toolName: toolName, args: step.Text, c: c}
+				}
+			}
 		},
 		OnContext: func(tokens int) {
 			c <- chatContextMsg{tokens: tokens, c: c}
@@ -234,6 +242,17 @@ func runChatAsync(parent context.Context, app *App, profile config.Profile, prov
 		ApproveTool: func(call tools.Call) bool {
 			currentProfile := app.activeProfile()
 			path, _ := call.Argument["path"].(string)
+
+			// Send tool call message for approval
+			if isFileWritingTool(call.Name) {
+				pathArg := path
+				if pathArg == "" {
+					pathArg, _ = call.Argument["file_path"].(string)
+				}
+				args := fmt.Sprintf("%s path=%s", call.Name, pathArg)
+				c <- chatToolCallMsg{toolName: call.Name, args: args, c: c}
+			}
+
 			if !currentProfile.IsAllowed(call.Name, path) && !app.RequestApproval(ctx, call) {
 				return false
 			}

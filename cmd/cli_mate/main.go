@@ -24,6 +24,7 @@ func main() {
 func newRootCommand() *cobra.Command {
 	var cfgPath string
 	var profileName string
+	var workspace string
 
 	cmd := &cobra.Command{
 		Use:   "cli_mate",
@@ -31,6 +32,18 @@ func newRootCommand() *cobra.Command {
 		Long:  "cli_mate is a terminal-first AI coding agent with provider, tool, and storage boundaries designed for production growth.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+
+			// If workspace flag provided or env var set, change working directory
+			if workspace == "" {
+				if envWs := os.Getenv("CLI_MATE_WORKSPACE"); envWs != "" {
+					workspace = envWs
+				}
+			}
+			if workspace != "" {
+				if err := os.Chdir(workspace); err != nil {
+					return fmt.Errorf("could not change to workspace %q: %w", workspace, err)
+				}
+			}
 			cfg, err := config.Load(cfgPath, profileName)
 			if err != nil {
 				return err
@@ -56,6 +69,7 @@ func newRootCommand() *cobra.Command {
 
 	cmd.PersistentFlags().StringVar(&cfgPath, "config", "", "path to config file")
 	cmd.PersistentFlags().StringVarP(&profileName, "profile", "p", "default", "profile name")
+	cmd.PersistentFlags().StringVar(&workspace, "workspace", "", "path to workspace root (cwd) - overrides current working directory")
 
 	cmd.AddCommand(newVersionCommand())
 	cmd.AddCommand(newRunCommand())

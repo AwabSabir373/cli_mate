@@ -13,36 +13,135 @@ func (a App) View() string {
 		return a.styles.error.Render(a.err.Error()) + "\n"
 	}
 
-	header := a.renderHeader()
+	layout := computeLayout(a.width, a.sidebar != nil && a.sidebar.hasContent(), a.planPanel != nil && a.planPanel.IsVisible())
+
+	header := a.renderHeader(layout)
 
 	if a.inputMode == "" && len(a.messages) == 0 && !a.loading {
 		return a.renderSetup(header)
 	}
 
 	var b strings.Builder
+
+	// Build main chat column
+	chatContent := a.renderChatContent(layout)
+
+	// Sidebar
+	sidebarContent := ""
+	if layout.ShowSidebar && a.sidebar != nil && a.sidebar.IsVisible() {
+		sidebarContent = a.sidebar.Render(layout.SidebarWidth, a.height-6, a.styles)
+	}
+
+	if sidebarContent != "" {
+		// Two-column layout
+		b.WriteString(a.styles.panel.Width(a.width - 4).Render(
+			lipgloss.JoinHorizontal(lipgloss.Top,
+				chatContent,
+				stylesVerticalDivider(a.styles),
+				sidebarContent,
+			),
+		))
+	} else {
+		// Single column
+		b.WriteString(a.renderPanelContent(header, layout))
+	}
+
+	return b.String()
+}
+
+func stylesVerticalDivider(styles appStyles) string {
+	return styles.muted.Render(" ┃ ")
+}
+
+func (a App) renderPanelContent(header string, layout layoutConfig) string {
+	var b strings.Builder
 	b.WriteString(header)
 	b.WriteString("\n\n")
 
-	if len(a.messages) > 0 {
+	// Chat transcript
+	if len(a.messages) > 0 || len(a.log) > 0 {
 		b.WriteString(a.console())
 		b.WriteString("\n")
 	}
 
+	// Streaming tool call preview
+	if a.streamingTool != nil && !a.streamingTool.completed {
+		toolView := streamingToolCallView(a.streamingTool, a.styles, layout.ChatWidth)
+		if toolView != "" {
+			b.WriteString(toolView)
+			b.WriteString("\n")
+		}
+	}
+
+	// Loading indicator
 	if a.loading {
 		b.WriteString(a.loadingText())
 		b.WriteString("\n\n")
+	} else if a.streamBuffer != "" && !a.loading {
+		// Streaming response preview with fade
+		preview := a.streamFade.render()
+		if preview != "" {
+			b.WriteString(preview)
+			b.WriteString("\n\n")
+		}
 	}
 
+	// Suggestions
 	if len(a.currentSuggestions()) > 0 {
 		b.WriteString(a.renderSuggestions())
 		b.WriteString("\n")
 	}
 
+	// Permission prompt
+	if a.permissionPrompt != nil && a.permissionPrompt.active {
+		b.WriteString(a.permissionPrompt.render(a.styles, layout.ChatWidth))
+		b.WriteString("\n\n")
+	}
+
+	// Input prompt
 	b.WriteString(a.renderPrompt())
+
 	return a.styles.panel.Width(a.width - 4).Render(b.String())
 }
 
+func (a App) renderHeader(layout layoutConfig) string {
+	logo := a.styles.logo.Render("cli_mate")
+	bits := []string{logo}
+
+	profile, err := a.cfg.Active()
+	if err == nil {
+		if layout.ShowHeaderPills {
+			if profile.Provider != "" {
+				bits = append(bits, a.styles.pill.Render(profile.Provider))
+			}
+			if profile.Model != "" {
+				bits = append(bits, a.styles.pill.Render(profile.Model))
+			}
+		}
+	}
+
+	if a.workspaceName != "" && layout.ShowHeaderPills {
+		bits = append(bits, a.styles.pill.Render(a.workspaceName))
+	}
+
+	if a.theme != "" && layout.ShowHeaderPills {
+		bits = append(bits, a.styles.pill.Render(a.theme))
+	}
+
+	// Token/message count
+	if a.tokensUsed > 0 {
+		bits = append(bits, a.styles.tokenCount.Render(fmt.Sprintf("~%d tokens", a.tokensUsed)))
+	} else if usage := a.tokenUsage(); usage != "" {
+		bits = append(bits, usage)
+	} else if len(a.messages) > 0 {
+		bits = append(bits, a.styles.muted.Render(fmt.Sprintf("%d msgs", len(a.messages))))
+	}
+
+	return a.styles.pillRow.Render(strings.Join(bits, " "))
+}
+
 func (a App) renderSetup(header string) string {
+
 	var b strings.Builder
 	b.WriteString(header)
 	b.WriteString("\n\n")
@@ -79,40 +178,6 @@ func (a App) renderSetup(header string) string {
 	return a.styles.panel.Width(a.width - 4).Render(b.String())
 }
 
-func (a App) renderHeader() string {
-	logo := a.styles.logo.Render("cli_mate")
-	bits := []string{logo}
-
-	profile, err := a.cfg.Active()
-	if err == nil {
-		provider := profile.Provider
-		if provider != "" {
-			bits = append(bits, a.styles.pill.Render(provider))
-		}
-		if profile.Model != "" {
-			bits = append(bits, a.styles.pill.Render(profile.Model))
-		}
-	}
-
-	if a.workspaceName != "" {
-		bits = append(bits, a.styles.pill.Render(a.workspaceName))
-	}
-
-	if a.theme != "" {
-		bits = append(bits, a.styles.pill.Render(a.theme))
-	}
-
-	if a.tokensUsed > 0 {
-		bits = append(bits, a.styles.tokenCount.Render(fmt.Sprintf("~%d tokens", a.tokensUsed)))
-	} else if usage := a.tokenUsage(); usage != "" {
-		bits = append(bits, usage)
-	} else {
-		bits = append(bits, a.styles.muted.Render(fmt.Sprintf("session %d msgs", len(a.messages))))
-	}
-
-	return a.styles.pillRow.Render(strings.Join(bits, " "))
-}
-
 func (a App) renderWorkspacePills() string {
 	profile, err := a.cfg.Active()
 	if err != nil {
@@ -133,33 +198,78 @@ func (a App) renderWorkspacePills() string {
 	)
 }
 
+func (a App) renderChatContent(layout layoutConfig) string {
+	renderWidth := max(40, layout.ChatWidth)
+	var b strings.Builder
+
+	// Show transcript messages
+	if len(a.messages) > 0 || len(a.log) > 0 {
+		b.WriteString(a.console())
+		b.WriteString("\n")
+	}
+
+	// Show streaming tool call if active
+	if a.streamingTool != nil && !a.streamingTool.completed {
+		toolView := streamingToolCallView(a.streamingTool, a.styles, renderWidth)
+		if toolView != "" {
+			b.WriteString(toolView)
+			b.WriteString("\n")
+		}
+	}
+
+	// Show loading state
+	if a.loading {
+		b.WriteString(a.loadingText())
+		b.WriteString("\n\n")
+	} else if a.streamBuffer != "" {
+		// Fade-rendered streaming preview
+		preview := a.streamFade.render()
+		if preview != "" {
+			b.WriteString(preview)
+			b.WriteString("\n\n")
+		}
+	}
+
+	// Suggestions
+	if len(a.currentSuggestions()) > 0 {
+		b.WriteString(a.renderSuggestions())
+		b.WriteString("\n")
+	}
+
+	// Permission prompt
+	if a.permissionPrompt != nil && a.permissionPrompt.active {
+		b.WriteString(a.permissionPrompt.render(a.styles, renderWidth))
+		b.WriteString("\n\n")
+	}
+
+	// Input prompt
+	b.WriteString(a.renderPrompt())
+
+	return b.String()
+}
+
 func (a App) console() string {
 	entries := a.log
-	scrollOffset := a.scrollOffset
 
 	if len(entries) == 0 {
 		return ""
 	}
 
-	// Calculate visible window
+	// Use viewport for scroll management
+	vp := a.viewport
 	visibleLines := 12
-	start := len(entries) - visibleLines - scrollOffset
-	if start < 0 {
-		start = 0
-	}
-	end := start + visibleLines
-	if end > len(entries) {
-		end = len(entries)
-	}
+	vp.setVisibleLines(visibleLines)
+	vp.setTotalLines(len(entries))
+
+	start, end := vp.visibleRange()
 
 	visible := entries[start:end]
 
 	var b strings.Builder
 	if start > 0 {
-		b.WriteString(a.styles.muted.Render(fmt.Sprintf("... %d older entries (scroll with Alt+Up/Down) ...\n", start)))
+		b.WriteString(a.styles.scrollHint.Render(fmt.Sprintf("... %d older entries ...\n", start)))
 	}
 
-	// Calculate render width once for all entries
 	renderWidth := max(40, a.width-8)
 
 	for i, entry := range visible {
@@ -183,14 +293,24 @@ func (a App) console() string {
 		}
 		marker = a.styles.logPrefix.Render(marker)
 
-		// Use cached render if available and width hasn't changed
 		entryIdx := start + i
 		rendered := ""
 		if entry.renderedText != "" && entry.renderWidth == renderWidth {
 			rendered = entry.renderedText
 		} else {
-			rendered = a.renderer.Render(entry.Text)
-			// Cache the rendered text in the entry
+			// Use custom markdown renderer for assistant entries
+			if entry.Kind == "assistant" {
+				rendered = renderMarkdown(entry.Text, renderWidth, a.styles)
+			} else if entry.Kind == "tool" {
+				cardRendered := a.renderToolEntry(entry, renderWidth)
+				if cardRendered != "" {
+					rendered = cardRendered
+				} else {
+					rendered = a.renderer.Render(entry.Text)
+				}
+			} else {
+				rendered = a.renderer.Render(entry.Text)
+			}
 			a.log[entryIdx].renderedText = rendered
 			a.log[entryIdx].renderWidth = renderWidth
 		}
@@ -200,10 +320,74 @@ func (a App) console() string {
 	}
 
 	if end < len(entries) {
-		b.WriteString(a.styles.muted.Render(fmt.Sprintf("... %d more entries ...\n", len(entries)-end)))
+		b.WriteString(a.styles.scrollHint.Render(fmt.Sprintf("... %d more entries ...\n", len(entries)-end)))
 	}
 
 	return b.String()
+}
+
+// renderToolEntry renders a tool log entry using the tool card registry.
+func (a App) renderToolEntry(entry logEntry, width int) string {
+	if a.toolCardRegistry == nil {
+		return ""
+	}
+
+	req := toolBodyRequest{
+		name:   parseToolName(entry.Text),
+		arg:    parseToolArg(entry.Text),
+		detail: entry.Text,
+		path:   parseToolPath(entry.Text),
+	}
+
+	// Skip hidden plumbing tools
+	if isHiddenPlumbingTool(req.name) {
+		return ""
+	}
+
+	return a.toolCardRegistry.renderCard(req, a.styles, width)
+}
+
+// parseToolName extracts the tool name from a log entry text.
+func parseToolName(text string) string {
+	fields := strings.Fields(text)
+	if len(fields) > 0 {
+		return fields[0]
+	}
+	return ""
+}
+
+// parseToolArg extracts the tool arguments from a log entry text.
+func parseToolArg(text string) string {
+	fields := strings.Fields(text)
+	if len(fields) > 1 {
+		return strings.Join(fields[1:], " ")
+	}
+	return ""
+}
+
+// parseToolPath attempts to extract a file path from tool args.
+func parseToolPath(text string) string {
+	if strings.Contains(text, "path=") {
+		parts := strings.Split(text, "path=")
+		if len(parts) > 1 {
+			path := strings.TrimSpace(parts[1])
+			if idx := strings.IndexAny(path, " ,}\n"); idx >= 0 {
+				path = path[:idx]
+			}
+			return strings.Trim(path, "\"'`")
+		}
+	}
+	if strings.Contains(text, "path:") {
+		parts := strings.Split(text, "path:")
+		if len(parts) > 1 {
+			path := strings.TrimSpace(parts[1])
+			if idx := strings.IndexAny(path, " ,}\n"); idx >= 0 {
+				path = path[:idx]
+			}
+			return strings.Trim(path, "\"'`")
+		}
+	}
+	return ""
 }
 
 func (a App) renderPrompt() string {
@@ -235,13 +419,16 @@ func (a App) renderPromptContent() string {
 		return a.styles.prompt.Render("model id: ") + a.styles.input.Render(a.input) + cursor
 	case "finder":
 		return a.renderFinder()
+	case "ask_user":
+		if a.askUserState != nil {
+			return a.askUserState.render(a.styles, a.promptWidth())
+		}
+		return ""
 	default:
-		// Mask API key if user types /api-key inline
 		displayInput := a.input
 		if strings.HasPrefix(displayInput, "/api-key ") && len(displayInput) > 9 {
 			displayInput = "/api-key " + strings.Repeat("*", len(displayInput)-9)
 		}
-		// Multiline input: show cursor on the correct line
 		lines := strings.Split(displayInput, "\n")
 		if len(lines) <= 1 {
 			if displayInput == "" {
@@ -279,13 +466,10 @@ func (a App) renderPromptContent() string {
 				b.WriteString("\n")
 			}
 		}
-
-		// Cursor at very end
 		if cursorLine == -1 {
 			b.WriteString(a.styles.prompt.Render(" · "))
 			b.WriteString(cursor)
 		}
-
 		return b.String()
 	}
 }
@@ -312,7 +496,6 @@ func (a App) loadingText() string {
 	spinnerChars := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	spinner := spinnerChars[a.loadingFrame%len(spinnerChars)]
 
-	// Show the real-time step from tool calls if available
 	currentStep := a.currentStepText
 	if currentStep == "" && len(a.loadingSteps) > 0 {
 		stepIndex := a.loadingFrame / 4
@@ -324,7 +507,6 @@ func (a App) loadingText() string {
 
 	var b strings.Builder
 
-	// Show completed step with checkmark
 	if a.completedStepText != "" {
 		b.WriteString(a.styles.success.Render("✓"))
 		b.WriteString(" ")
@@ -332,12 +514,10 @@ func (a App) loadingText() string {
 		b.WriteString("\n")
 	}
 
-	// Show current step with spinner
-	b.WriteString(a.styles.accent.Render(spinner))
+	b.WriteString(a.styles.spinner.Render(spinner))
 	b.WriteString(" ")
 	b.WriteString(a.styles.accent.Render(currentStep))
 
-	// Show a truncated preview of streaming tokens if any
 	if a.streamBuffer != "" {
 		preview := truncateStreamPreview(a.streamBuffer, 80)
 		if preview != "" {
@@ -350,12 +530,10 @@ func (a App) loadingText() string {
 }
 
 func truncateStreamPreview(s string, maxLen int) string {
-	// Take the last meaningful portion of the stream
 	cleaned := strings.TrimSpace(s)
 	if len(cleaned) <= maxLen {
 		return cleaned
 	}
-	// Try to find a good break point
 	truncated := cleaned[len(cleaned)-maxLen:]
 	if idx := strings.Index(truncated, " "); idx >= 0 && idx < 20 {
 		truncated = truncated[idx+1:]
@@ -366,7 +544,7 @@ func truncateStreamPreview(s string, maxLen int) string {
 func (a App) tokenUsage() string {
 	total := 0
 	for _, msg := range a.messages {
-		total += len(msg.Content) / 4 // rough estimate
+		total += len(msg.Content) / 4
 	}
 	if total == 0 {
 		return ""

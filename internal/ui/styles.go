@@ -210,6 +210,31 @@ type appStyles struct {
 	diffRemove lipgloss.Style
 	tokenCount lipgloss.Style
 	cursor     lipgloss.Style
+	// New styles for enhanced UI
+	card         lipgloss.Style
+	cardHeader   lipgloss.Style
+	cardBody     lipgloss.Style
+	cardFooter   lipgloss.Style
+	progressBar  lipgloss.Style
+	progressFill lipgloss.Style
+	progressBg   lipgloss.Style
+	permission   lipgloss.Style
+	sidebarTitle lipgloss.Style
+	sidebarItem  lipgloss.Style
+	hover        lipgloss.Style
+	badge        lipgloss.Style
+	badgeAdd     lipgloss.Style
+	badgeDel     lipgloss.Style
+	code         lipgloss.Style
+	codePanel    lipgloss.Style
+	spinner      lipgloss.Style
+	fadeFresh    lipgloss.Style
+	fadeInk      lipgloss.Style
+	planHeader   lipgloss.Style
+	planStep     lipgloss.Style
+	planProgress lipgloss.Style
+	info         lipgloss.Style
+	scrollHint   lipgloss.Style
 }
 
 func buildStyles(c themeColors) appStyles {
@@ -278,5 +303,60 @@ func buildStyles(c themeColors) appStyles {
 			Foreground(c.muted).Italic(true),
 		cursor: lipgloss.NewStyle().
 			Background(c.fg).Foreground(c.bg),
+		// New enhanced styles
+		card: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(c.border).
+			Padding(0, 1),
+		cardHeader: lipgloss.NewStyle().
+			Foreground(c.accent).Bold(true),
+		cardBody: lipgloss.NewStyle().
+			Foreground(c.fg),
+		cardFooter: lipgloss.NewStyle().
+			Foreground(c.muted).Italic(true),
+		progressBar: lipgloss.NewStyle().
+			Width(20),
+		progressFill: lipgloss.NewStyle().
+			Background(c.success).
+			Foreground(c.success),
+		progressBg: lipgloss.NewStyle().
+			Background(c.softPanel).
+			Foreground(c.softPanel),
+		permission: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("228")).Bold(true),
+		sidebarTitle: lipgloss.NewStyle().
+			Foreground(c.muted).Bold(true),
+		sidebarItem: lipgloss.NewStyle().
+			Foreground(c.fg),
+		hover: lipgloss.NewStyle().
+			Background(c.selected).Foreground(lipgloss.Color("230")),
+		badge: lipgloss.NewStyle().
+			Background(c.pill).Foreground(c.fg).
+			Padding(0, 1),
+		badgeAdd: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("42")).Bold(true),
+		badgeDel: lipgloss.NewStyle().
+			Foreground(c.error).Bold(true),
+		code: lipgloss.NewStyle().
+			Foreground(c.fg),
+		codePanel: lipgloss.NewStyle().
+			Background(c.softPanel).
+			Padding(0, 1),
+		spinner: lipgloss.NewStyle().
+			Foreground(c.accent),
+		fadeFresh: lipgloss.NewStyle().
+			Foreground(c.accent),
+		fadeInk: lipgloss.NewStyle().
+			Foreground(c.fg),
+		planHeader: lipgloss.NewStyle().
+			Foreground(c.accent).Bold(true),
+		planStep: lipgloss.NewStyle().
+			Foreground(c.fg),
+		planProgress: lipgloss.NewStyle().
+			Foreground(c.muted),
+		info: lipgloss.NewStyle().
+			Foreground(c.accent),
+		scrollHint: lipgloss.NewStyle().
+			Foreground(c.muted).Italic(true),
 	}
 }
