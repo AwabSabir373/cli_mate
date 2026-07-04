@@ -75,6 +75,7 @@ func newRootCommand() *cobra.Command {
 	cmd.AddCommand(newRunCommand())
 	cmd.AddCommand(newSessionsCommand())
 	cmd.AddCommand(newCronCommand())
+	cmd.AddCommand(newMCPServerCommand())
 
 	return cmd
 }

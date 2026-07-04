@@ -20,4 +20,6 @@ type SessionStore interface {
 	Messages(context.Context, string) ([]agent.Message, error)
 	ListSessions(context.Context) ([]SessionRecord, error)
 	DeleteSession(context.Context, string) error
+	UpdateSession(context.Context, SessionRecord) error
+	UpdateSessionTitle(context.Context, string, string) error
 }

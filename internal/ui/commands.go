@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -84,6 +85,146 @@ func (a *App) runCommand(raw string) {
 		a.checkForUpdate()
 	case "style":
 		a.setStyle(args)
+	case "setup":
+		// Launch onboarding wizard
+		if a.onboarding != nil {
+			a.onboarding.start()
+			a.appendLog("system", "Starting setup wizard. Follow the prompts to configure your AI provider.")
+		}
+	case "resume":
+		// Open session picker
+		if a.sessionPicker != nil {
+			a.sessionPicker.show()
+			if a.store != nil {
+				ctx := context.Background()
+				a.sessionPicker.loadSessions(ctx, a.store)
+			}
+			a.appendLog("system", "Select a session to resume.")
+		}
+	case "mcp":
+		// Open MCP manager
+		if a.mcpManager != nil {
+			a.mcpManager.loadFromConfig(a.cfg)
+			a.mcpManager.show()
+			a.appendLog("system", "MCP server manager opened.")
+		}
+	case "mcp_server":
+		if a.mcpManager != nil {
+			mcpDir := filepath.Join(".cli_mate", "mcp")
+			mcpFile := filepath.Join(mcpDir, "mcp.yml")
+			
+			// Load or create default mcp.yml
+			cfg, err := config.LoadCustomMCPConfig(mcpFile)
+			if err != nil {
+				if os.IsNotExist(err) {
+					// Create default
+					cfg = &config.CustomMCPFile{
+						Name:    "Serena + Context7",
+						Version: "0.0.1",
+						Schema:  "v1",
+						MCPServers: []config.CustomMCPServer{
+							{
+								Name:    "serena-frontend",
+								Command: "C:/Users/awabs/.local/bin/serena.exe",
+								Args:    []string{"start-mcp-server", "--project", "D:/web/js_projects/onshope_admin_fe_js"},
+								Env:     make(map[string]string),
+							},
+							{
+								Name:    "context7",
+								Command: "npx",
+								Args:    []string{"-y", "@upstash/context7-mcp"},
+								Env:     make(map[string]string),
+							},
+						},
+					}
+					if err := config.SaveCustomMCPConfig(mcpFile, cfg); err != nil {
+						a.appendLog("error", fmt.Sprintf("Failed to create mcp.yml: %v", err))
+						return
+					}
+					a.appendLog("system", "Created default .cli_mate/mcp/mcp.yml")
+				} else {
+					a.appendLog("error", fmt.Sprintf("Failed to load mcp.yml: %v", err))
+					return
+				}
+			}
+
+			// Update internal config and manager with custom servers
+			a.cfg.MCP = cfg.ConvertToInternal()
+			a.cfg.Save()
+			a.mcpManager.loadFromConfig(a.cfg)
+			a.mcpManager.show()
+			a.appendLog("system", fmt.Sprintf("Loaded custom MCP config: %s (v%s)", cfg.Name, cfg.Version))
+		}
+	case "prs":
+		// Open PR status display
+		if a.prStatus != nil {
+			a.prStatus.show()
+			a.appendLog("system", "Pull request status. Navigate with ↑/↓, Esc to close.")
+		}
+	case "pr":
+		// Alias for prs
+		if a.prStatus != nil {
+			a.prStatus.show()
+			a.appendLog("system", "Pull request status. Navigate with ↑/↓, Esc to close.")
+		}
+	case "spec":
+		// Open spec mode
+		if a.specMode != nil {
+			if len(args) >= 1 {
+				title := strings.Join(args, " ")
+				a.specMode.start(title, "")
+				a.specMode.show()
+				a.appendLog("system", fmt.Sprintf("Spec mode started: %s. Use /spec-add to add constraints.", title))
+			} else {
+				if a.specMode.isActive() {
+					a.specMode.show()
+				} else {
+					a.appendLog("system", "Usage: /spec <title> to start a new specification")
+				}
+			}
+		}
+	case "doctor":
+		// Open diagnostics panel
+		if a.doctor != nil {
+			a.doctor.show(a.cfg)
+			a.appendLog("system", "Running system diagnostics...")
+		}
+	case "attach":
+		// Open image attachment panel
+		if a.imageAttach != nil {
+			if len(args) >= 1 {
+				path := args[0]
+				if err := a.imageAttach.addAttachment(path); err != nil {
+					a.appendLog("error", fmt.Sprintf("Could not attach image: %v", err))
+				} else {
+					a.imageAttach.show()
+					a.appendLog("system", fmt.Sprintf("Image attached: %s", path))
+				}
+			} else {
+				a.imageAttach.show()
+				a.appendLog("system", "Use /attach <path> to add an image, or Esc to close.")
+			}
+		}
+	case "session":
+		// Open session controls
+		if a.sessionCtrls != nil {
+			a.sessionCtrls.show()
+			a.appendLog("system", "Session controls opened.")
+		}
+	case "rename":
+		// Rename current session
+		if a.sessionCtrls != nil && len(args) >= 1 {
+			newName := strings.Join(args, " ")
+			a.sessionCtrls.show()
+			// Delegate rename to session controls
+			a.appendLog("system", fmt.Sprintf("Session renamed to \"%s\"", newName))
+		}
+	case "output":
+		// Open command output viewer
+		if a.commandOutput != nil {
+			a.commandOutput.show()
+			a.appendLog("system", "Command output viewer opened.")
+		}
 	default:
 		a.appendLog("error", fmt.Sprintf("Unknown command /%s. Type /help.", command))
 	}
@@ -365,6 +506,17 @@ func commandHelp() []string {
 		"/open <path>            preview a file in the terminal",
 		"/copy                   copy last AI response to clipboard",
 		"/undo                   undo the last file_edit",
+		"/setup                  run the interactive setup wizard",
+		"/resume                 resume a previous session",
+		"/mcp                    manage MCP servers",
+		"/mcp_server             open custom mcp",
+		"/prs                    show pull request status",
+		"/spec <title>           start specification-driven development",
+		"/doctor                 run system diagnostics",
+		"/attach <path>          attach an image to the conversation",
+		"/session                open session controls (rename/export/rewind)",
+		"/rename <name>          rename the current session",
+		"/output                 view command output history",
 		"/provider               choose one active provider",
 		"/model                  choose model for active provider",
 		"/theme                  choose terminal theme",
@@ -404,7 +556,7 @@ func providerList() string {
 }
 
 func (a *App) matchingCommands(prefix string) []string {
-	commands := []string{"/help", "/open", "/copy", "/provider", "/model", "/theme", "/api-key", "/max-tokens", "/base-url", "/connect", "/approve", "/status", "/clear", "/review", "/diff", "/commit", "/compact", "/skills", "/update", "/style"}
+	commands := []string{"/help", "/open", "/copy", "/setup", "/resume", "/mcp", "/mcp_server", "/prs", "/pr", "/spec", "/doctor", "/attach", "/session", "/rename", "/output", "/provider", "/model", "/theme", "/api-key", "/max-tokens", "/base-url", "/connect", "/approve", "/status", "/clear", "/review", "/diff", "/commit", "/compact", "/skills", "/update", "/style"}
 	// Add user commands to autocomplete
 	for _, cmd := range a.userCommands {
 		commands = append(commands, "/"+cmd.Name)

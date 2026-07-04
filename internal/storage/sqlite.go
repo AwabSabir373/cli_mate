@@ -134,3 +134,17 @@ func (s *SQLiteStore) DeleteSession(ctx context.Context, id string) error {
 	}
 	return tx.Commit()
 }
+
+func (s *SQLiteStore) UpdateSession(ctx context.Context, record SessionRecord) error {
+	now := time.Now().UTC()
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?`,
+		record.Title, now, record.ID)
+	return err
+}
+
+func (s *SQLiteStore) UpdateSessionTitle(ctx context.Context, id string, title string) error {
+	now := time.Now().UTC()
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?`,
+		title, now, id)
+	return err
+}

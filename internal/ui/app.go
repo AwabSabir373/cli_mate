@@ -120,20 +120,39 @@ type App struct {
 	responseStyle     agent.ResponseStyle
 
 	// New enhanced UI fields
-	toolCardRegistry  *toolBodyRegistry
-	streamFade        *streamingFadeState
-	streamingTool     *streamingToolCall
-	sidebar           *Sidebar
-	planPanel         *PlanPanel
-	permissionPrompt  *permissionPrompt
-	askUserState      *askUserState
-	renderCache       *renderCache
+	toolCardRegistry *toolBodyRegistry
+	streamFade       *streamingFadeState
+	streamingTool    *streamingToolCall
+	sidebar          *Sidebar
+	planPanel        *PlanPanel
+	permissionPrompt *permissionPrompt
+	askUserState     *askUserState
+	renderCache      *renderCache
 	// Unwired component fields (created but need integration)
 	viewport          *viewport
 	flushBatcher      *flushBatcher
 	hoverManager      *hoverManager
 	bgTerminalManager *bgTerminalManager
 	planStepDetail    *planStepDetail
+	// New major feature components
+	onboarding    *onboardingState
+	composer      *composerState
+	sessionPicker *sessionPicker
+	mcpManager    *mcpManager
+	// Additional feature components
+	transcriptSelection *transcriptSelection
+	prStatus            *PRDisplay
+	specMode            *specMode
+	subchatManager      *subchatManager
+	// Remaining feature components (phase 2)
+	autocomplete     *autocompleteState
+	picker           *genericPicker
+	sessionCtrls     *sessionControls
+	sessionTitle     *sessionTitleGenerator
+	commandOutput    *commandOutputView
+	startup          *startupState
+	imageAttach      *imageAttachState
+	doctor           *doctorView
 }
 
 // SetProgram wires the Bubble Tea program back into the app so background
@@ -221,18 +240,37 @@ func NewApp(cfg *config.Config, store storage.SessionStore) App {
 			{Kind: "system", Text: "Welcome to cli_mate. Press / to open commands, choose /provider, then follow the setup.", Time: time.Now()},
 		},
 
-	// New enhanced UI
-	toolCardRegistry: newDefaultToolBodyRegistry(),
-	streamFade:       newStreamingFade(styles.accent.GetForeground(), styles.muted.GetForeground()), // lipgloss.TerminalColor is compatible
-	planPanel:        planPanel,
-	sidebar:          sidebar,
-	renderCache:      newRenderCache(30*time.Second, 200),
-	// New wired components
-	viewport:          newViewport(),
-	flushBatcher:      newFlushBatcher(),
-	hoverManager:      newHoverManager(),
-	bgTerminalManager: newBGTerminalManager(),
-	planStepDetail:    newPlanStepDetail(),
+		// New enhanced UI
+		toolCardRegistry: newDefaultToolBodyRegistry(),
+		streamFade:       newStreamingFade(styles.accent.GetForeground(), styles.muted.GetForeground()), // lipgloss.TerminalColor is compatible
+		planPanel:        planPanel,
+		sidebar:          sidebar,
+		renderCache:      newRenderCache(30*time.Second, 200),
+		// New wired components
+		viewport:          newViewport(),
+		flushBatcher:      newFlushBatcher(),
+		hoverManager:      newHoverManager(),
+		bgTerminalManager: newBGTerminalManager(),
+		planStepDetail:    newPlanStepDetail(),
+		// New major feature components
+		onboarding:    newOnboardingState(),
+		composer:      newComposerState(),
+		sessionPicker: newSessionPicker(),
+		mcpManager:    newMCPManager(),
+		// Additional feature components
+		transcriptSelection: newTranscriptSelection(),
+		prStatus:            newPRDisplay(),
+		specMode:            newSpecMode(),
+		subchatManager:      newSubchatManager(),
+		// Remaining feature components (phase 2)
+		autocomplete:  newAutocompleteState(),
+		picker:        newGenericPicker(),
+		sessionCtrls:  newSessionControls(),
+		sessionTitle:  newSessionTitleGenerator(),
+		commandOutput: newCommandOutputView(),
+		startup:       newStartupState(),
+		imageAttach:   newImageAttachState(),
+		doctor:        newDoctorView(),
 	}
 }
 
@@ -347,6 +385,164 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.loadingFrame++
 		return a, loadingTick()
 	case tea.KeyMsg:
+		// Route events to overlays first (onboarding, session picker, MCP manager)
+		if a.mcpManager != nil && a.mcpManager.isVisible() {
+			shouldSave, action := a.mcpManager.handleKey(msg.String())
+			if shouldSave {
+				// Save MCP servers directly to config
+				if a.cfg != nil {
+					a.cfg.MCP = a.mcpManager.servers
+				}
+				a.saveSettings()
+				a.appendLog("system", "MCP servers saved.")
+			}
+			_ = action
+			return a, nil
+		}
+
+		if a.sessionPicker != nil && a.sessionPicker.isVisible() {
+			selectedID, finished := a.sessionPicker.handleKey(msg.String())
+			if finished && selectedID != "" && a.store != nil {
+				ctx := context.Background()
+				msgs, err := resumeSession(ctx, a.store, selectedID)
+				if err == nil {
+					// Convert agent messages to provider messages
+					a.messages = nil
+					for _, m := range msgs {
+						a.messages = append(a.messages, providers.Message{
+							Role:    string(m.Role),
+							Content: m.Content,
+						})
+					}
+					a.appendLog("system", fmt.Sprintf("Resumed session with %d messages.", len(msgs)))
+				} else {
+					a.appendLog("error", fmt.Sprintf("Could not resume session: %v", err))
+				}
+			}
+			return a, nil
+		}
+
+		if a.onboarding != nil && a.onboarding.isActive() {
+			key := msg.String()
+			onboardingStage := a.onboarding.stage
+
+			// For API key and base URL stages, forward typed characters to the input field
+			if onboardingStage == setupStageAPIKey || onboardingStage == setupStageBaseURL {
+				if len(key) == 1 && key != "\n" && key != "\r" {
+					// Forward typed character to the input buffer
+					a.input += key
+					a.cursorPos = len(a.input)
+					return a, nil
+				}
+				if key == "backspace" && len(a.input) > 0 {
+					a.input = a.input[:len(a.input)-1]
+					a.cursorPos = len(a.input)
+					return a, nil
+				}
+				if key == "enter" {
+					// Take the input text and feed it to the onboarding state
+					if onboardingStage == setupStageAPIKey {
+						a.onboarding.apiKey = a.input
+						_, _ = a.onboarding.handleKey(key)
+						if a.onboarding.stage != setupStageAPIKey {
+							// Move past this stage
+							a.input = ""
+							a.cursorPos = 0
+						}
+					} else if onboardingStage == setupStageBaseURL {
+						a.onboarding.baseURL = a.input
+						_, _ = a.onboarding.handleKey(key)
+						if a.onboarding.stage != setupStageBaseURL {
+							a.input = ""
+							a.cursorPos = 0
+						}
+					}
+					return a, nil
+				}
+				if key == "esc" {
+					a.onboarding.handleKey(key)
+					a.input = ""
+					a.cursorPos = 0
+					return a, nil
+				}
+				if key == "ctrl+v" {
+					a.pasteFromClipboard()
+					return a, nil
+				}
+				return a, nil
+			}
+
+			// For selection-based stages, route to onboarding
+			shouldClose, _ := a.onboarding.handleKey(key)
+			if shouldClose {
+				a.onboarding.active = false
+			}
+			// If complete, apply config and connect
+			if a.onboarding.isComplete() {
+				a.onboarding.applyConfig(&a)
+				a.appendLog("system", "Setup complete! Connecting to provider...")
+				a.connect()
+				a.onboarding.reset()
+			}
+			return a, nil
+		}
+
+		// Route events to spec mode overlay
+		if a.specMode != nil && a.specMode.isVisible() {
+			a.specMode.handleKey(msg.String())
+			return a, nil
+		}
+
+		// Route events to subchat overlay
+		if a.subchatManager != nil && a.subchatManager.isActive() {
+			a.subchatManager.handleKey(msg.String())
+			return a, nil
+		}
+
+		// Route events to PR status overlay
+		if a.prStatus != nil && a.prStatus.isVisible() {
+			a.prStatus.handleKey(msg.String())
+			return a, nil
+		}
+
+		// Route events to session controls overlay
+		if a.sessionCtrls != nil && a.sessionCtrls.isVisible() {
+			a.sessionCtrls.handleKey(msg.String())
+			return a, nil
+		}
+
+		// Route events to command output overlay
+		if a.commandOutput != nil && a.commandOutput.isVisible() {
+			a.commandOutput.handleKey(msg.String())
+			return a, nil
+		}
+
+		// Route events to startup overlay
+		if a.startup != nil && a.startup.isVisible() {
+			if a.startup.handleKey(msg.String()) {
+				return a, nil
+			}
+			return a, nil
+		}
+
+		// Route events to doctor overlay
+		if a.doctor != nil && a.doctor.isVisible() {
+			a.doctor.handleKey(msg.String())
+			return a, nil
+		}
+
+		// Route events to image attach overlay
+		if a.imageAttach != nil && a.imageAttach.isVisible() {
+			a.imageAttach.handleKey(msg.String())
+			return a, nil
+		}
+
+		// Route events to picker overlay
+		if a.picker != nil && a.picker.isVisible() {
+			a.picker.handleKey(msg.String())
+			return a, nil
+		}
+
 		if a.pendingApproval != nil {
 			if a.handleApprovalKey(msg) {
 				return a, nil
@@ -367,6 +563,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if msg.Paste {
 			text := string(msg.Runes)
+			// Check if onboarding is active and handling paste
+			if a.onboarding != nil && a.onboarding.isActive() {
+				a.onboarding.apiKey = text
+				a.input = ""
+				a.cursorPos = 0
+				a.appendLog("system", "API key pasted. Press Enter to confirm.")
+				return a, nil
+			}
 			a.insertText(text)
 			a.selected = 0
 			a.isPasting = true

@@ -3,14 +3,18 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
-// Sidebar displays session info, touched files, and plan in a right-side panel.
+// Sidebar displays session info, touched files, git status, and plan in a right-side panel.
 type Sidebar struct {
 	visible      bool
 	sessionInfo  SessionInfo
 	planPanel    *PlanPanel
 	touchedFiles []touchedFile
+	gitBranch    string
+	gitStatus    string // short git status summary
+	sessionTime  time.Duration
 }
 
 // SessionInfo contains information about the current session.
@@ -55,12 +59,19 @@ func (s *Sidebar) SetTouchedFiles(files []touchedFile) {
 	s.touchedFiles = files
 }
 
+// SetGitInfo updates the git branch and status.
+func (s *Sidebar) SetGitInfo(branch, status string) {
+	s.gitBranch = branch
+	s.gitStatus = status
+}
+
 // hasContent returns true if the sidebar has any content to show.
 func (s *Sidebar) hasContent() bool {
 	return s.sessionInfo.Provider != "" ||
 		s.sessionInfo.Model != "" ||
 		(s.planPanel != nil && s.planPanel.IsVisible()) ||
-		len(s.touchedFiles) > 0
+		len(s.touchedFiles) > 0 ||
+		s.gitBranch != ""
 }
 
 // Render produces the sidebar view.
@@ -76,10 +87,22 @@ func (s *Sidebar) Render(width int, height int, styles appStyles) string {
 
 	var sections []string
 
+	// Workspace/session header
+	header := s.renderHeader(styles)
+	if header != "" {
+		sections = append(sections, header)
+	}
+
 	// Session info section
 	section := s.renderSessionInfo(styles)
 	if section != "" {
 		sections = append(sections, section)
+	}
+
+	// Git status section
+	gitSection := s.renderGitStatus(styles)
+	if gitSection != "" {
+		sections = append(sections, gitSection)
 	}
 
 	// Plan panel section
@@ -96,6 +119,12 @@ func (s *Sidebar) Render(width int, height int, styles appStyles) string {
 		if filesSection != "" {
 			sections = append(sections, filesSection)
 		}
+	}
+
+	// Keyboard hints at bottom
+	hints := s.renderHints(styles)
+	if hints != "" {
+		sections = append(sections, hints)
 	}
 
 	if len(sections) == 0 {
@@ -117,26 +146,77 @@ func (s *Sidebar) Render(width int, height int, styles appStyles) string {
 		Render(content)
 }
 
+func (s *Sidebar) renderHeader(styles appStyles) string {
+	return styles.sidebarTitle.Render("cli_mate")
+}
+
 func (s *Sidebar) renderSessionInfo(styles appStyles) string {
 	var lines []string
 	lines = append(lines, styles.sidebarTitle.Render("Session"))
 	lines = append(lines, "")
 
 	if s.sessionInfo.Provider != "" {
-		lines = append(lines, styles.muted.Render("Provider:")+" "+s.sessionInfo.Provider)
+		lines = append(lines, fmt.Sprintf("%s %s",
+			styles.muted.Render("Provider:"),
+			styles.accent.Render(s.sessionInfo.Provider),
+		))
 	}
 	if s.sessionInfo.Model != "" {
-		lines = append(lines, styles.muted.Render("Model:")+" "+s.sessionInfo.Model)
+		lines = append(lines, fmt.Sprintf("%s %s",
+			styles.muted.Render("Model:"),
+			s.sessionInfo.Model,
+		))
 	}
 	if s.sessionInfo.Branch != "" {
-		lines = append(lines, styles.muted.Render("Branch:")+" "+s.sessionInfo.Branch)
+		lines = append(lines, fmt.Sprintf("%s %s",
+			styles.muted.Render("Branch:"),
+			s.sessionInfo.Branch,
+		))
 	}
 	if s.sessionInfo.Style != "" {
-		lines = append(lines, styles.muted.Render("Style:")+" "+s.sessionInfo.Style)
+		lines = append(lines, fmt.Sprintf("%s %s",
+			styles.muted.Render("Style:"),
+			s.sessionInfo.Style,
+		))
 	}
 	if s.sessionInfo.Messages > 0 {
-		lines = append(lines, styles.muted.Render(fmt.Sprintf("Messages: %d", s.sessionInfo.Messages)))
+		lines = append(lines, fmt.Sprintf("%s %d",
+			styles.muted.Render("Messages:"),
+			s.sessionInfo.Messages,
+		))
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func (s *Sidebar) renderGitStatus(styles appStyles) string {
+	if s.gitBranch == "" {
+		return ""
+	}
+
+	var lines []string
+	lines = append(lines, styles.sidebarTitle.Render("Git"))
+	lines = append(lines, "")
+
+	branchLabel := s.gitBranch
+	if len(branchLabel) > 20 {
+		branchLabel = branchLabel[:20] + "..."
+	}
+	lines = append(lines, fmt.Sprintf("%s %s",
+		styles.muted.Render("Branch:"),
+		styles.accent.Render(branchLabel),
+	))
+
+	if s.gitStatus != "" {
+		lines = append(lines, fmt.Sprintf("%s %s",
+			styles.muted.Render("Status:"),
+			s.gitStatus,
+		))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func (s *Sidebar) renderHints(styles appStyles) string {
+	return styles.muted.Render("Ctrl+B toggle · D detail")
 }

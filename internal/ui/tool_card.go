@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -357,13 +358,240 @@ func isHiddenPlumbingTool(name string) bool {
 	return false
 }
 
-// truncateString truncates a string to maxLen with ellipsis.
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
+// --- OSC 8 Hyperlinks ---
+
+// hyperlink wraps text in an OSC 8 hyperlink escape sequence.
+// This makes file paths clickable in terminals that support it (kitty, WezTerm, iTerm2, etc.).
+func hyperlink(text, target string) string {
+	if target == "" {
+		return text
 	}
-	return s[:maxLen-3] + "..."
+	// OSC 8 sequence: <esc>]8;;<uri><bell><text><esc>]8;;<bell>
+	return fmt.Sprintf("\x1b]8;;%s\x07%s\x1b]8;;\x07", target, text)
 }
+
+// hyperlinkPath wraps a file path in a file:// hyperlink.
+func hyperlinkPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	// Use file:// URI
+	target := "file://" + path
+	return hyperlink(path, target)
+}
+
+// displayPath shortens a path for display while keeping it informative.
+// It uses ~/ for home dirs and shows the last two segments.
+func displayPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	// Normalize to forward slashes
+	normalized := strings.ReplaceAll(path, "\\", "/")
+	parts := strings.Split(normalized, "/")
+
+	if len(parts) <= 3 {
+		return normalized
+	}
+
+	// Show last 2 segments
+	tail := parts[len(parts)-2:]
+	return ".../" + strings.Join(tail, "/")
+}
+
+// --- Word-Level Diff Highlighting ---
+
+// wordDiff computes a simple word-level diff between two strings.
+// Returns the old and new strings with change markers for rendering.
+type wordDiffResult struct {
+	OldWords  []wordSpan
+	NewWords  []wordSpan
+}
+
+type wordSpan struct {
+	Text   string
+	IsDiff bool // true if this span differs between old/new
+}
+
+// computeWordDiff computes word-level changes between oldText and newText.
+// Useful for rendering precise word-level diffs in addition to line-level.
+func computeWordDiff(oldText, newText string) wordDiffResult {
+	if oldText == newText {
+		return wordDiffResult{
+			OldWords: []wordSpan{{Text: oldText}},
+			NewWords: []wordSpan{{Text: newText}},
+		}
+	}
+
+	// Split into words (keep whitespace)
+	oldWords := splitWords(oldText)
+	newWords := splitWords(newText)
+
+	// Simple LCS-based diff
+	lcs := computeLCS(oldWords, newWords)
+
+	var result wordDiffResult
+
+	// Mark old words
+	oidx, lidx := 0, 0
+	for oidx < len(oldWords) {
+		if lidx < len(lcs) && oldWords[oidx] == lcs[lidx] {
+			result.OldWords = append(result.OldWords, wordSpan{Text: oldWords[oidx]})
+			lidx++
+		} else {
+			result.OldWords = append(result.OldWords, wordSpan{Text: oldWords[oidx], IsDiff: true})
+		}
+		oidx++
+	}
+
+	// Mark new words
+	nidx, lidx := 0, 0
+	for nidx < len(newWords) {
+		if lidx < len(lcs) && newWords[nidx] == lcs[lidx] {
+			result.NewWords = append(result.NewWords, wordSpan{Text: newWords[nidx]})
+			lidx++
+		} else {
+			result.NewWords = append(result.NewWords, wordSpan{Text: newWords[nidx], IsDiff: true})
+		}
+		nidx++
+	}
+
+	return result
+}
+
+// splitWords splits text into words including whitespace.
+func splitWords(text string) []string {
+	var words []string
+	var current strings.Builder
+	for _, r := range text {
+		if r == ' ' || r == '\t' {
+			if current.Len() > 0 {
+				words = append(words, current.String())
+				current.Reset()
+			}
+			words = append(words, string(r))
+		} else {
+			current.WriteRune(r)
+		}
+	}
+	if current.Len() > 0 {
+		words = append(words, current.String())
+	}
+	return words
+}
+
+// computeLCS computes the longest common subsequence of two string slices.
+// Uses full DP matrix to enable backtracking.
+func computeLCS(a, b []string) []string {
+	m, n := len(a), len(b)
+	if m == 0 || n == 0 {
+		return nil
+	}
+
+	// Build full DP matrix for backtracking
+	dp := make([][]int, m+1)
+	for i := 0; i <= m; i++ {
+		dp[i] = make([]int, n+1)
+	}
+
+	for i := 1; i <= m; i++ {
+		for j := 1; j <= n; j++ {
+			if a[i-1] == b[j-1] {
+				dp[i][j] = dp[i-1][j-1] + 1
+			} else if dp[i-1][j] > dp[i][j-1] {
+				dp[i][j] = dp[i-1][j]
+			} else {
+				dp[i][j] = dp[i][j-1]
+			}
+		}
+	}
+
+	// Backtrack to find LCS using the full matrix
+	result := make([]string, 0, dp[m][n])
+	i, j := m, n
+	for i > 0 && j > 0 {
+		if a[i-1] == b[j-1] {
+			result = append([]string{a[i-1]}, result...)
+			i--
+			j--
+		} else if dp[i-1][j] > dp[i][j-1] {
+			i--
+		} else {
+			j--
+		}
+	}
+
+	return result
+}
+
+// --- Reasoning Block ---
+
+// reasoningBlock represents a collapsible reasoning/thinking block.
+type reasoningBlock struct {
+	text      string
+	collapsed bool
+	startedAt time.Time
+	elapsed   time.Duration
+}
+
+// newReasoningBlock creates a new reasoning block.
+func newReasoningBlock(text string) *reasoningBlock {
+	return &reasoningBlock{
+		text:      text,
+		collapsed: false,
+		startedAt: time.Now(),
+	}
+}
+
+// toggleCollapse toggles the collapsed state.
+func (rb *reasoningBlock) toggleCollapse() {
+	rb.collapsed = !rb.collapsed
+}
+
+// renderReasoningBlock renders the reasoning block.
+func renderReasoningBlock(rb *reasoningBlock, styles appStyles, width int) string {
+	if rb.text == "" {
+		return ""
+	}
+
+	rb.elapsed = time.Since(rb.startedAt).Round(time.Second)
+
+	elapsedStr := styles.muted.Render(fmt.Sprintf("(%s)", rb.elapsed))
+	var header string
+	if rb.collapsed {
+		header = fmt.Sprintf("%s %s %s",
+			styles.roleSystem.Render("▶ reasoning"),
+			styles.muted.Render(fmt.Sprintf("%d chars", len(rb.text))),
+			elapsedStr,
+		)
+	} else {
+		header = fmt.Sprintf("%s %s",
+			styles.roleSystem.Render("▼ reasoning"),
+			elapsedStr,
+		)
+	}
+
+	var b strings.Builder
+	b.WriteString(header)
+	b.WriteString("\n")
+
+	if !rb.collapsed {
+		const maxReasoningLines = 20
+		lines := strings.Split(rb.text, "\n")
+		if len(lines) > maxReasoningLines {
+			lines = lines[:maxReasoningLines]
+			lines = append(lines, styles.muted.Render(fmt.Sprintf("  ... %d more lines ...", len(strings.Split(rb.text, "\n"))-maxReasoningLines)))
+		}
+		content := strings.Join(lines, "\n")
+		b.WriteString(styles.muted.Render(content))
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+// truncateString is defined in util.go
+// truncateString(s string, maxLen int) string
 
 // --- Structured Argument Extraction ---
 

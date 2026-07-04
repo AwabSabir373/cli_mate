@@ -168,6 +168,26 @@ func ensureDefaults(cfg *Config) {
 	if cfg.HTTP.Retries == 0 {
 		cfg.HTTP.Retries = 3
 	}
+
+	// Inject default built-in MCP server for project context
+	hasCliMCP := false
+	for _, mcp := range cfg.MCP {
+		if mcp.Name == "cli_mcp" {
+			hasCliMCP = true
+			break
+		}
+	}
+	if !hasCliMCP {
+		// Use os.Executable to get the path of the current binary
+		exe, err := os.Executable()
+		if err == nil {
+			cfg.MCP = append(cfg.MCP, MCPConfig{
+				Name:    "cli_mcp",
+				Command: exe,
+				Args:    []string{"mcp-server"},
+			})
+		}
+	}
 }
 
 func configPath(explicit string, used string) string {

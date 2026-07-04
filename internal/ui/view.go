@@ -13,6 +13,92 @@ func (a App) View() string {
 		return a.styles.error.Render(a.err.Error()) + "\n"
 	}
 
+	// Overlay views take full screen (priority ordering)
+	if a.onboarding != nil && a.onboarding.isActive() {
+		overlay := a.renderOverlay(a.onboarding, a.width)
+		if overlay != "" {
+			return overlay
+		}
+	}
+
+	if a.sessionPicker != nil && a.sessionPicker.isVisible() {
+		overlay := a.renderSessionPickerOverlay(a.width)
+		if overlay != "" {
+			return overlay
+		}
+	}
+
+	if a.mcpManager != nil && a.mcpManager.isVisible() {
+		overlay := a.renderMCPOverlay(a.width)
+		if overlay != "" {
+			return overlay
+		}
+	}
+
+	if a.specMode != nil && a.specMode.isVisible() {
+		overlay := renderSpecMode(a.specMode, a.styles, a.width)
+		if overlay != "" {
+			return overlay
+		}
+	}
+
+	if a.subchatManager != nil && a.subchatManager.isActive() {
+		overlay := renderSubchat(a.subchatManager, a.styles, a.width)
+		if overlay != "" {
+			return overlay
+		}
+	}
+
+	if a.prStatus != nil && a.prStatus.isVisible() {
+		overlay := renderPRStatus(a.prStatus, a.styles, a.width)
+		if overlay != "" {
+			return overlay
+		}
+	}
+
+	// Additional overlay components
+	if a.startup != nil && a.startup.isVisible() {
+		overlay := renderStartup(a.startup, a.styles, a.width)
+		if overlay != "" {
+			return overlay
+		}
+	}
+
+	if a.sessionCtrls != nil && a.sessionCtrls.isVisible() {
+		overlay := renderSessionControls(a.sessionCtrls, a.styles, a.width, a.messages)
+		if overlay != "" {
+			return overlay
+		}
+	}
+
+	if a.commandOutput != nil && a.commandOutput.isVisible() {
+		overlay := renderCommandOutput(a.commandOutput, a.styles, a.width)
+		if overlay != "" {
+			return overlay
+		}
+	}
+
+	if a.doctor != nil && a.doctor.isVisible() {
+		overlay := renderDoctorView(a.doctor, a.styles, a.width)
+		if overlay != "" {
+			return overlay
+		}
+	}
+
+	if a.imageAttach != nil && a.imageAttach.isVisible() {
+		overlay := renderImageAttachments(a.imageAttach, a.styles, a.width)
+		if overlay != "" {
+			return overlay
+		}
+	}
+
+	if a.picker != nil && a.picker.isVisible() {
+		overlay := renderPicker(a.picker, a.styles, a.width)
+		if overlay != "" {
+			return overlay
+		}
+	}
+
 	layout := computeLayout(a.width, a.sidebar != nil && a.sidebar.hasContent(), a.planPanel != nil && a.planPanel.IsVisible())
 
 	header := a.renderHeader(layout)
@@ -146,9 +232,16 @@ func (a App) renderSetup(header string) string {
 	b.WriteString(header)
 	b.WriteString("\n\n")
 
+	// Render ASCII art logo based on terminal width
+	if a.width >= 80 {
+		b.WriteString(renderLogo(a.styles, a.width))
+	} else {
+		b.WriteString(renderLogoSmall(a.styles))
+	}
+	b.WriteString("\n\n")
+
 	b.WriteString(a.styles.heroBorder.Width(a.width - 6).Render(
 		lipgloss.JoinVertical(lipgloss.Left,
-			a.styles.title.Render("cli_mate"),
 			a.styles.subtitle.Render("Terminal-first AI coding agent"),
 			"",
 			a.styles.accent.Render("01")+"  "+a.styles.muted.Render("Choose a provider          /provider"),
@@ -321,6 +414,20 @@ func (a App) console() string {
 
 	if end < len(entries) {
 		b.WriteString(a.styles.scrollHint.Render(fmt.Sprintf("... %d more entries ...\n", len(entries)-end)))
+	}
+
+	// Show scroll position indicator
+	scrollIndicator := vp.renderScrollIndicator(renderWidth, a.styles)
+	if scrollIndicator != "" {
+		b.WriteString(scrollIndicator)
+		b.WriteString("\n")
+	}
+
+	// Show scroll-to-bottom hint when scrolled up during active streaming
+	if !vp.isAtBottom() && (a.loading || a.streamBuffer != "") {
+		b.WriteString(a.styles.accent.Render("  ▼ jump to latest "))
+		b.WriteString(a.styles.muted.Render("(scroll down)"))
+		b.WriteString("\n")
 	}
 
 	return b.String()
@@ -602,6 +709,42 @@ func (a App) renderFinder() string {
 	b.WriteString("\n")
 	b.WriteString(a.styles.muted.Render("  Type to filter · Enter to open · Esc to close"))
 	return a.styles.panel.Width(a.width - 4).Render(b.String())
+}
+
+// renderOverlay renders the onboarding wizard as a full-screen overlay.
+func (a App) renderOverlay(os *onboardingState, width int) string {
+	if os == nil || !os.isActive() {
+		return ""
+	}
+	overlay := os.render(a.styles, width)
+	if overlay == "" {
+		return ""
+	}
+	return a.styles.panel.Width(width - 4).Render(overlay)
+}
+
+// renderSessionPickerOverlay renders the session picker as a full-screen overlay.
+func (a App) renderSessionPickerOverlay(width int) string {
+	if a.sessionPicker == nil || !a.sessionPicker.isVisible() {
+		return ""
+	}
+	overlay := renderSessionPicker(a.sessionPicker, a.styles, width)
+	if overlay == "" {
+		return ""
+	}
+	return a.styles.panel.Width(width - 4).Render(overlay)
+}
+
+// renderMCPOverlay renders the MCP manager as a full-screen overlay.
+func (a App) renderMCPOverlay(width int) string {
+	if a.mcpManager == nil || !a.mcpManager.isVisible() {
+		return ""
+	}
+	overlay := renderMCPManager(a.mcpManager, a.styles, width)
+	if overlay == "" {
+		return ""
+	}
+	return a.styles.panel.Width(width - 4).Render(overlay)
 }
 
 func defaultEntry(kind, text string) logEntry {

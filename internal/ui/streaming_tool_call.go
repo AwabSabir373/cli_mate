@@ -4,11 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
-const streamingTailLines = 6
+const streamingTailLines = 10
 
 // streamingToolCall represents an in-progress tool call being streamed.
 type streamingToolCall struct {
@@ -110,43 +108,74 @@ func streamingToolCallView(tc *streamingToolCall, styles appStyles, width int) s
 		return ""
 	}
 
-	// Show path
+	// Show path with status indicator
 	pathDisplay := tc.path
 	if pathDisplay == "" {
-		pathDisplay = "loading..."
+		pathDisplay = "resolving..."
 	}
 
 	var b strings.Builder
-	b.WriteString(styles.roleTool.Render(fmt.Sprintf("✎ %s", pathDisplay)))
+	statusIcon := styles.spinner.Render("✎")
+	b.WriteString(styles.roleTool.Render(fmt.Sprintf("%s %s", statusIcon, pathDisplay)))
 	b.WriteString("\n")
 
-	// Show content tail if available
+	// Show content tail with syntax highlighting
 	if tc.content != "" {
 		lines := strings.Split(tc.content, "\n")
-		if len(lines) > streamingTailLines {
-			lines = lines[len(lines)-streamingTailLines:]
+		totalLines := len(lines)
+		if totalLines > streamingTailLines {
+			lines = lines[totalLines-streamingTailLines:]
 		}
 		content := strings.Join(lines, "\n")
+
+		// Try to highlight based on file extension
+		lang := ""
+		if tc.path != "" {
+			lexer := cachedLexerForPath(tc.path)
+			if lexer != nil {
+				lang = lexer.Config().Name
+			}
+		}
+		if lang != "" {
+			content = highlightCode(content, lang)
+		}
+
 		b.WriteString(styles.softPanel.
 			Width(width - 8).
-			Render(lipgloss.NewStyle().
-				Foreground(lipgloss.Color("243")).
-				Render(content)))
+			Render(content))
 		b.WriteString("\n")
 	}
 
-	// Show line count
+	// Show progress: line count and byte size
 	lineCount := 0
+	byteCount := 0
 	if tc.content != "" {
 		lineCount = strings.Count(tc.content, "\n")
 		if lineCount == 0 && tc.content != "" {
 			lineCount = 1
 		}
+		byteCount = len(tc.content)
 	}
 	if lineCount > 0 {
-		b.WriteString(styles.muted.Render(fmt.Sprintf("  %d lines", lineCount)))
+		sizeStr := formatByteCount(byteCount)
+		b.WriteString(styles.muted.Render(fmt.Sprintf("  %d lines · %s", lineCount, sizeStr)))
+		b.WriteString("\n")
+	} else {
+		b.WriteString(styles.muted.Render("  writing..."))
 		b.WriteString("\n")
 	}
 
 	return b.String()
+}
+
+// formatByteCount formats byte count as human-readable string.
+func formatByteCount(bytes int) string {
+	switch {
+	case bytes >= 1024*1024:
+		return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
+	case bytes >= 1024:
+		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
+	default:
+		return fmt.Sprintf("%d B", bytes)
+	}
 }
