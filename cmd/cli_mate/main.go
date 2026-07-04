@@ -60,7 +60,7 @@ func newRootCommand() *cobra.Command {
 			}
 
 			app := ui.NewApp(cfg, store)
-			program := tea.NewProgram(app)
+			program := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
 			app.SetProgram(program)
 			_, err = program.Run()
 			return err

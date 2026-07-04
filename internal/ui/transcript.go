@@ -118,7 +118,7 @@ func (t *transcript) hasOlderEntries(maxLines int) (int, bool) {
 }
 
 // hasNewerEntries returns true if there are newer entries after the visible window.
-func (t *transcript) hasNewerEntries(maxLines int) (int, bool) {
+func (t *transcript) hasNewerEntries(_ int) (int, bool) {
 	end := len(t.rows) - t.scrollPos
 	if end >= len(t.rows) {
 		return 0, false

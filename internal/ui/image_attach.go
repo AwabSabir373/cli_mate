@@ -216,7 +216,7 @@ func (ias *imageAttachState) adjustScroll() {
 }
 
 // renderImageAttachments renders the image attachment panel.
-func renderImageAttachments(ias *imageAttachState, styles appStyles, width int) string {
+func renderImageAttachments(ias *imageAttachState, styles appStyles, _ int) string {
 	if !ias.visible {
 		return ""
 	}

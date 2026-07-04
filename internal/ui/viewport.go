@@ -173,7 +173,7 @@ func (vp *viewport) scrollHint(styles appStyles) string {
 }
 
 // renderScrollIndicator renders a scroll position indicator bar.
-func (vp *viewport) renderScrollIndicator(width int, styles appStyles) string {
+func (vp *viewport) renderScrollIndicator(_ int, _ appStyles) string {
 	if vp.totalLines <= vp.visibleLines {
 		return ""
 	}

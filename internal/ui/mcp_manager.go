@@ -29,22 +29,42 @@ const (
 
 // mcpManager manages MCP server configuration via UI.
 type mcpManager struct {
-	visible    bool
-	stage      mcpWizardStage
-	servers    []config.MCPConfig
-	cursor     int
-	scrollOff  int
-	editEntry  mcpServerEntry
-	editEnvKey string
-	err        string
+	visible         bool
+	stage           mcpWizardStage
+	servers         []config.MCPConfig
+	cursor          int
+	scrollOff       int
+	editEntry       mcpServerEntry
+	editEnvKey      string
+	err             string
+	builtinTotal    int            // total built-in tools registered
+	builtinEnabled  int            // active (enabled) built-in tools
+	toolCounts      map[string]int // live tool counts per server name
 }
 
 // newMCPManager creates a new MCP manager.
 func newMCPManager() *mcpManager {
 	return &mcpManager{
-		servers:   []config.MCPConfig{},
-		editEntry: mcpServerEntry{envVars: make(map[string]string)},
+		servers:        []config.MCPConfig{},
+		editEntry:      mcpServerEntry{envVars: make(map[string]string)},
+		builtinTotal:   15,
+		builtinEnabled: 13,
+		toolCounts:     make(map[string]int),
 	}
+}
+
+// SetBuiltinToolCount sets the built-in tool counts shown in the panel header.
+func (mm *mcpManager) SetBuiltinToolCount(enabled, total int) {
+	mm.builtinEnabled = enabled
+	mm.builtinTotal = total
+}
+
+// UpdateToolCount sets the live tool count for a connected MCP server.
+func (mm *mcpManager) UpdateToolCount(serverName string, count int) {
+	if mm.toolCounts == nil {
+		mm.toolCounts = make(map[string]int)
+	}
+	mm.toolCounts[serverName] = count
 }
 
 // loadFromConfig loads MCP servers from the config.
@@ -104,7 +124,7 @@ func (mm *mcpManager) handleKey(key string) (bool, string) {
 func (mm *mcpManager) handleListKey(key string) (bool, string) {
 	switch key {
 	case "up", "shift+tab":
-		if mm.cursor > 0 {
+		if mm.cursor > -1 {
 			mm.cursor--
 		}
 		mm.adjustScroll()
@@ -114,7 +134,9 @@ func (mm *mcpManager) handleListKey(key string) (bool, string) {
 		}
 		mm.adjustScroll()
 	case "enter", " ":
-		if mm.cursor >= 0 && mm.cursor < len(mm.servers) {
+		if mm.cursor == -1 {
+			// built-in tools row: no action
+		} else if mm.cursor >= 0 && mm.cursor < len(mm.servers) {
 			// Select server (edit/delete)
 			mm.editEntry = mcpServerEntry{
 				name:    mm.servers[mm.cursor].Name,
@@ -128,7 +150,7 @@ func (mm *mcpManager) handleListKey(key string) (bool, string) {
 			mm.stage = mcpStageConfirm
 			mm.cursor = 0
 		} else if mm.cursor >= len(mm.servers) {
-			// Add new server
+			// Add new server (⊕ button row)
 			mm.editEntry = mcpServerEntry{envVars: make(map[string]string)}
 			mm.stage = mcpStageAddName
 			mm.cursor = 0
@@ -231,18 +253,19 @@ func (mm *mcpManager) handleConfirmKey(key string) (bool, string) {
 			mm.cursor++
 		}
 	case "enter", " ":
-		if mm.cursor == 0 {
+		switch mm.cursor {
+		case 0:
 			// Save server
 			args := strings.Fields(mm.editEntry.args)
 			mm.saveCurrentServer(args)
 			mm.stage = mcpStageList
 			mm.cursor = 0
 			return true, "save"
-		} else if mm.cursor == 1 {
+		case 1:
 			// Edit - Go back to name
 			mm.stage = mcpStageAddName
 			mm.cursor = 0
-		} else if mm.cursor == 2 {
+		case 2:
 			// Delete
 			mm.deleteCurrentServer()
 			mm.stage = mcpStageList
@@ -332,56 +355,133 @@ func renderMCPManager(mm *mcpManager, styles appStyles, width int) string {
 
 func (mm *mcpManager) renderList(styles appStyles, width int) string {
 	var b strings.Builder
-	b.WriteString(styles.pill.Render(" MCP Servers "))
+
+	// ── Header ──────────────────────────────────────────────────────────────
+	b.WriteString(styles.accent.Render("Tools"))
+	b.WriteString("\n")
+	b.WriteString(styles.muted.Render("Manage MCP servers and tool policies"))
 	b.WriteString("\n\n")
 
-	b.WriteString(styles.muted.Render("Manage your MCP (Model Context Protocol) servers:"))
+	// ── Built-in Tools Row ───────────────────────────────────────────────────
+	// cursor == -1 means the built-in row is highlighted
+	builtinRow := mm.renderBuiltinRow(styles, width)
+	if mm.cursor == -1 {
+		b.WriteString(styles.selected.Render(" " + builtinRow + " "))
+	} else {
+		b.WriteString(" ")
+		b.WriteString(builtinRow)
+	}
 	b.WriteString("\n\n")
 
+	// ── MCP Servers Section Header ────────────────────────────────────────────
+	addIndicator := styles.muted.Render("⊕")
+	if mm.cursor == len(mm.servers) {
+		addIndicator = styles.accent.Render("⊕")
+	}
+	sectionWidth := width - 8
+	if sectionWidth < 20 {
+		sectionWidth = 20
+	}
+	mcpHeader := styles.accent.Render("MCP Servers")
+	padding := sectionWidth - 13 // len("MCP Servers") + spaces
+	if padding < 1 {
+		padding = 1
+	}
+	b.WriteString(mcpHeader)
+	b.WriteString(strings.Repeat(" ", padding))
+	b.WriteString(addIndicator)
+	b.WriteString("\n\n")
+
+	// ── Server Entries ────────────────────────────────────────────────────────
 	if len(mm.servers) == 0 {
 		b.WriteString(styles.muted.Render("  No MCP servers configured."))
-		b.WriteString("\n\n")
-	}
-
-	maxVisible := 10
-	start := mm.scrollOff
-	end := start + maxVisible
-	if end > len(mm.servers) {
-		end = len(mm.servers)
-	}
-
-	for i := start; i < end; i++ {
-		srv := mm.servers[i]
-		label := fmt.Sprintf("%s  (%s %s)", srv.Name, srv.Command, strings.Join(srv.Args, " "))
-		if len(label) > 60 {
-			label = label[:60] + "..."
-		}
-		if i == mm.cursor {
-			b.WriteString(styles.selected.Render(fmt.Sprintf(" ▸ %s", label)))
-			b.WriteString("\n")
-		} else {
-			b.WriteString(fmt.Sprintf("   %s", label))
-			b.WriteString("\n")
-		}
-	}
-
-	// Add new option
-	addLabel := "+ Add MCP Server"
-	if mm.cursor == len(mm.servers) {
-		b.WriteString(styles.selected.Render(fmt.Sprintf(" ▸ %s", addLabel)))
+		b.WriteString("\n  ")
+		b.WriteString(styles.muted.Render("Press Enter on ⊕ above to add one."))
 		b.WriteString("\n")
 	} else {
-		b.WriteString(fmt.Sprintf("   %s", addLabel))
-		b.WriteString("\n")
+		maxVisible := 10
+		start := mm.scrollOff
+		end := start + maxVisible
+		if end > len(mm.servers) {
+			end = len(mm.servers)
+		}
+		for i := start; i < end; i++ {
+			srv := mm.servers[i]
+			b.WriteString(mm.renderServerRow(srv, i == mm.cursor, styles, width))
+			b.WriteString("\n")
+		}
 	}
 
 	b.WriteString("\n")
-	b.WriteString(styles.muted.Render("  ↑/↓ navigate · Enter edit/add · Del remove · Esc close"))
+	b.WriteString(styles.muted.Render("  ↑/↓ navigate  ·  Enter select  ·  Del remove  ·  Esc close"))
 	b.WriteString("\n")
 	return b.String()
 }
 
-func (mm *mcpManager) renderAddName(styles appStyles, width int) string {
+// renderBuiltinRow renders the "Built-in Tools 13/15 ○" row.
+func (mm *mcpManager) renderBuiltinRow(styles appStyles, _ int) string {
+	chevron := styles.muted.Render("∨")
+	icon := styles.muted.Render("✦")
+	label := styles.accent.Render("Built-in Tools")
+	badge := styles.badge.Render(fmt.Sprintf("%d/%d", mm.builtinEnabled, mm.builtinTotal))
+	toggle := styles.muted.Render("○")
+	return fmt.Sprintf("%s %s %s %s%s%s",
+		chevron, icon, label, badge,
+		strings.Repeat(" ", 4),
+		toggle)
+}
+
+// renderServerRow renders a single MCP server row:
+//
+//	serena-frontend ●                    :
+//	  ✦  Tools  28  ○
+func (mm *mcpManager) renderServerRow(srv config.MCPConfig, selected bool, styles appStyles, width int) string {
+	var b strings.Builder
+
+	// Status dot: green if we have a live tool count, muted otherwise
+	var status string
+	if _, ok := mm.toolCounts[srv.Name]; ok {
+		status = styles.success.Render("●")
+	} else {
+		status = styles.muted.Render("●")
+	}
+
+	serverName := srv.Name
+	if selected {
+		serverName = styles.accent.Render(srv.Name)
+	}
+
+	menudot := styles.muted.Render(":")
+
+	// Server header line
+	headerWidth := width - 10
+	if headerWidth < 20 {
+		headerWidth = 20
+	}
+	nameLine := fmt.Sprintf("%s %s", serverName, status)
+	padding := headerWidth - len(srv.Name) - 2
+	if padding < 1 {
+		padding = 1
+	}
+	b.WriteString(nameLine)
+	b.WriteString(strings.Repeat(" ", padding))
+	b.WriteString(menudot)
+	b.WriteString("\n")
+
+	// Tools sub-row — show live count if available
+	chevron := styles.muted.Render("  ∨")
+	toolIcon := styles.muted.Render("✦")
+	toolLabel := styles.muted.Render("Tools")
+	tc := mm.toolCounts[srv.Name] // 0 if not present
+	toolCount := styles.badge.Render(fmt.Sprintf("%d", tc))
+	toggle := styles.muted.Render("○")
+	toolsLine := fmt.Sprintf("%s %s %s %s %s", chevron, toolIcon, toolLabel, toolCount, toggle)
+	b.WriteString(toolsLine)
+
+	return b.String()
+}
+
+func (mm *mcpManager) renderAddName(styles appStyles, _ int) string {
 	var b strings.Builder
 	b.WriteString(styles.pill.Render(" Add MCP Server: Name "))
 	b.WriteString("\n\n")
@@ -404,7 +504,7 @@ func (mm *mcpManager) renderAddName(styles appStyles, width int) string {
 	return b.String()
 }
 
-func (mm *mcpManager) renderAddCommand(styles appStyles, width int) string {
+func (mm *mcpManager) renderAddCommand(styles appStyles, _ int) string {
 	var b strings.Builder
 	b.WriteString(styles.pill.Render(" Add MCP Server: Command "))
 	b.WriteString("\n\n")
@@ -429,7 +529,7 @@ func (mm *mcpManager) renderAddCommand(styles appStyles, width int) string {
 	return b.String()
 }
 
-func (mm *mcpManager) renderAddArgs(styles appStyles, width int) string {
+func (mm *mcpManager) renderAddArgs(styles appStyles, _ int) string {
 	var b strings.Builder
 	b.WriteString(styles.pill.Render(" Add MCP Server: Arguments "))
 	b.WriteString("\n\n")
@@ -448,7 +548,7 @@ func (mm *mcpManager) renderAddArgs(styles appStyles, width int) string {
 	return b.String()
 }
 
-func (mm *mcpManager) renderAddEnv(styles appStyles, width int) string {
+func (mm *mcpManager) renderAddEnv(styles appStyles, _ int) string {
 	var b strings.Builder
 	b.WriteString(styles.pill.Render(" Add MCP Server: Environment "))
 	b.WriteString("\n\n")
@@ -489,7 +589,7 @@ func (mm *mcpManager) renderAddEnv(styles appStyles, width int) string {
 	return b.String()
 }
 
-func (mm *mcpManager) renderConfirm(styles appStyles, width int) string {
+func (mm *mcpManager) renderConfirm(styles appStyles, _ int) string {
 	var b strings.Builder
 	if mm.editEntry.name != "" && mm.findServerIndex(mm.editEntry.name) >= 0 {
 		b.WriteString(styles.pill.Render(" Edit MCP Server "))

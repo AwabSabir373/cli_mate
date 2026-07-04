@@ -82,7 +82,7 @@ func highlightCode(code string, lang string) string {
 
 // highlightCodeWithTheme syntax-highlights code using terminal theme-aware colors.
 // Falls back to the simple version if custom theming isn't available.
-func highlightCodeWithTheme(code string, lang string, fg lipgloss.Color, bg lipgloss.Color) string {
+func highlightCodeWithTheme(code string, lang string, _ lipgloss.Color, _ lipgloss.Color) string {
 	if code == "" {
 		return ""
 	}

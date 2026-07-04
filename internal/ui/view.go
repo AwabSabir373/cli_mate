@@ -392,16 +392,17 @@ func (a App) console() string {
 			rendered = entry.renderedText
 		} else {
 			// Use custom markdown renderer for assistant entries
-			if entry.Kind == "assistant" {
+			switch entry.Kind {
+			case "assistant":
 				rendered = renderMarkdown(entry.Text, renderWidth, a.styles)
-			} else if entry.Kind == "tool" {
+			case "tool":
 				cardRendered := a.renderToolEntry(entry, renderWidth)
 				if cardRendered != "" {
 					rendered = cardRendered
 				} else {
 					rendered = a.renderer.Render(entry.Text)
 				}
-			} else {
+			default:
 				rendered = a.renderer.Render(entry.Text)
 			}
 			a.log[entryIdx].renderedText = rendered

@@ -102,7 +102,7 @@ func (p *permissionPrompt) handleKey(key string) (string, bool) {
 }
 
 // render renders the permission prompt UI.
-func (p *permissionPrompt) render(styles appStyles, width int) string {
+func (p *permissionPrompt) render(styles appStyles, _ int) string {
 	if !p.active {
 		return ""
 	}

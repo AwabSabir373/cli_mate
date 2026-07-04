@@ -153,7 +153,7 @@ func ciStatusIcon(status string) string {
 }
 
 // renderPRStatus renders the PR status panel.
-func renderPRStatus(pd *PRDisplay, styles appStyles, width int) string {
+func renderPRStatus(pd *PRDisplay, styles appStyles, _ int) string {
 	if !pd.visible {
 		return ""
 	}

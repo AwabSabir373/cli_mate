@@ -12,7 +12,7 @@ func renderLogo(styles appStyles, width int) string {
 }
 
 // renderCleanLogo renders a clean block-letter CLI MATE logo with pixel scatter.
-func renderCleanLogo(styles appStyles, width int) string {
+func renderCleanLogo(styles appStyles, _ int) string {
 	accent := styles.accent
 	dim := styles.muted
 

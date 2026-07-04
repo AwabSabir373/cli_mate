@@ -96,7 +96,7 @@ func (sl *selectableList) adjustScroll() {
 }
 
 // render renders the selectable list.
-func (sl *selectableList) render(width int, styles appStyles) string {
+func (sl *selectableList) render(_ int, styles appStyles) string {
 	if len(sl.items) == 0 {
 		return styles.muted.Render("  No items available.")
 	}

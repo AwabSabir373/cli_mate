@@ -441,7 +441,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if key == "enter" {
 					// Take the input text and feed it to the onboarding state
-					if onboardingStage == setupStageAPIKey {
+					switch onboardingStage {
+					case setupStageAPIKey:
 						a.onboarding.apiKey = a.input
 						_, _ = a.onboarding.handleKey(key)
 						if a.onboarding.stage != setupStageAPIKey {
@@ -449,7 +450,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							a.input = ""
 							a.cursorPos = 0
 						}
-					} else if onboardingStage == setupStageBaseURL {
+					case setupStageBaseURL:
 						a.onboarding.baseURL = a.input
 						_, _ = a.onboarding.handleKey(key)
 						if a.onboarding.stage != setupStageBaseURL {

@@ -138,7 +138,7 @@ func loadSessionsCmd(store storage.SessionStore, picker *sessionPicker) tea.Cmd 
 }
 
 // renderSessionPicker renders the session picker UI.
-func renderSessionPicker(sp *sessionPicker, styles appStyles, width int) string {
+func renderSessionPicker(sp *sessionPicker, styles appStyles, _ int) string {
 	if !sp.visible {
 		return ""
 	}

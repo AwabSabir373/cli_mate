@@ -173,7 +173,7 @@ func severityIndicator(severity string) string {
 }
 
 // renderSpecMode renders the specification mode overlay.
-func renderSpecMode(sm *specMode, styles appStyles, width int) string {
+func renderSpecMode(sm *specMode, styles appStyles, _ int) string {
 	if !sm.isVisible() {
 		return ""
 	}

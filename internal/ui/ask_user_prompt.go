@@ -129,7 +129,7 @@ func (as *askUserState) handleKey(key string) (string, bool) {
 }
 
 // render renders the ask-user prompt UI.
-func (as *askUserState) render(styles appStyles, width int) string {
+func (as *askUserState) render(styles appStyles, _ int) string {
 	if !as.active {
 		return ""
 	}
@@ -195,9 +195,9 @@ func (as *askUserState) render(styles appStyles, width int) string {
 				typePrefix = "▸ "
 			}
 			if as.answerCursor == len(q.Options) {
-				b.WriteString(styles.selected.Render(fmt.Sprintf("%s✏ Type your own answer", typePrefix)))
+				b.WriteString(styles.selected.Render(typePrefix + "✏ Type your own answer"))
 			} else {
-				b.WriteString(fmt.Sprintf("  ✏ Type your own answer"))
+				b.WriteString("  ✏ Type your own answer")
 			}
 			b.WriteString("\n")
 		}

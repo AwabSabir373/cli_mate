@@ -39,7 +39,7 @@ func (a *App) HandleMouse(msg tea.MouseMsg) {
 	}
 }
 
-func (a *App) mouseHitTest(x, y int) MouseZone {
+func (a *App) mouseHitTest(_ int, y int) MouseZone {
 	// Input area at bottom (last 2 lines)
 	if y >= a.height-2 {
 		return MZoneInput

@@ -65,7 +65,7 @@ func (ts *transcriptSelection) isRowVisible(row transcriptRow, allRows []transcr
 }
 
 // handleClick handles a mouse click on the transcript.
-func (ts *transcriptSelection) handleClick(rowIdx int, styles appStyles) string {
+func (ts *transcriptSelection) handleClick(rowIdx int, _ appStyles) string {
 	if rowIdx < 0 {
 		return ""
 	}

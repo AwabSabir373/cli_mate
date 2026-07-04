@@ -241,7 +241,7 @@ func (cc *commandCenter) handleKey(key string) string {
 }
 
 // render renders the command center UI.
-func (cc *commandCenter) render(styles appStyles, width int) string {
+func (cc *commandCenter) render(styles appStyles, _ int) string {
 	if !cc.visible {
 		return ""
 	}

@@ -105,7 +105,7 @@ func captureWorkFromLog(log []logEntry) []planStepWork {
 }
 
 // renderPlanStepDetail renders the plan step detail view.
-func renderPlanStepDetail(psd *planStepDetail, width int, styles appStyles) string {
+func renderPlanStepDetail(psd *planStepDetail, _ int, styles appStyles) string {
 	if !psd.visible {
 		return ""
 	}

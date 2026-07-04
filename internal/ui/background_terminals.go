@@ -77,7 +77,7 @@ func (bgm *bgTerminalManager) summary() string {
 }
 
 // render renders the background terminal view.
-func (bgm *bgTerminalManager) render(width int, styles appStyles) string {
+func (bgm *bgTerminalManager) render(_ int, styles appStyles) string {
 	if !bgm.isVisible() {
 		return ""
 	}

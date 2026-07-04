@@ -549,7 +549,7 @@ func (rb *reasoningBlock) toggleCollapse() {
 }
 
 // renderReasoningBlock renders the reasoning block.
-func renderReasoningBlock(rb *reasoningBlock, styles appStyles, width int) string {
+func renderReasoningBlock(rb *reasoningBlock, styles appStyles, _ int) string {
 	if rb.text == "" {
 		return ""
 	}

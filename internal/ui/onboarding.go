@@ -231,16 +231,17 @@ func (os *onboardingState) handleReviewKey(key string) (bool, string) {
 			os.cursor++
 		}
 	case "enter", " ":
-		if os.cursor == 0 {
+		switch os.cursor {
+		case 0:
 			// Confirm and save
 			os.stage = setupStageComplete
 			os.cursor = 0
 			return false, ""
-		} else if os.cursor == 1 {
+		case 1:
 			// Go back to provider selection
 			os.stage = setupStageProvider
 			os.cursor = 0
-		} else if os.cursor == 2 {
+		case 2:
 			// Cancel
 			os.active = false
 			return true, ""
@@ -302,7 +303,7 @@ func (os *onboardingState) render(styles appStyles, width int) string {
 	return ""
 }
 
-func (os *onboardingState) renderWelcome(styles appStyles, width int) string {
+func (os *onboardingState) renderWelcome(styles appStyles, _ int) string {
 	var b strings.Builder
 	b.WriteString(styles.pill.Render(" Setup Wizard "))
 	b.WriteString("\n\n")
@@ -325,7 +326,7 @@ func (os *onboardingState) renderWelcome(styles appStyles, width int) string {
 	return b.String()
 }
 
-func (os *onboardingState) renderProvider(styles appStyles, width int) string {
+func (os *onboardingState) renderProvider(styles appStyles, _ int) string {
 	var b strings.Builder
 	b.WriteString(styles.pill.Render(" Step 1: Choose Provider "))
 	b.WriteString("\n\n")
@@ -360,7 +361,7 @@ func (os *onboardingState) renderProvider(styles appStyles, width int) string {
 	return b.String()
 }
 
-func (os *onboardingState) renderAPIKey(styles appStyles, width int) string {
+func (os *onboardingState) renderAPIKey(styles appStyles, _ int) string {
 	var b strings.Builder
 	b.WriteString(styles.pill.Render(" Step 2: API Key "))
 	b.WriteString("\n\n")
@@ -396,7 +397,7 @@ func (os *onboardingState) renderAPIKey(styles appStyles, width int) string {
 	return b.String()
 }
 
-func (os *onboardingState) renderBaseURL(styles appStyles, width int) string {
+func (os *onboardingState) renderBaseURL(styles appStyles, _ int) string {
 	var b strings.Builder
 	b.WriteString(styles.pill.Render(" Step 2: Base URL "))
 	b.WriteString("\n\n")
@@ -419,7 +420,7 @@ func (os *onboardingState) renderBaseURL(styles appStyles, width int) string {
 	return b.String()
 }
 
-func (os *onboardingState) renderModel(styles appStyles, width int) string {
+func (os *onboardingState) renderModel(styles appStyles, _ int) string {
 	var b strings.Builder
 	b.WriteString(styles.pill.Render(fmt.Sprintf(" Step 3: Choose Model (%s) ", os.provider)))
 	b.WriteString("\n\n")
@@ -450,7 +451,7 @@ func (os *onboardingState) renderModel(styles appStyles, width int) string {
 	return b.String()
 }
 
-func (os *onboardingState) renderReview(styles appStyles, width int) string {
+func (os *onboardingState) renderReview(styles appStyles, _ int) string {
 	var b strings.Builder
 	b.WriteString(styles.pill.Render(" Step 4: Review "))
 	b.WriteString("\n\n")
@@ -495,7 +496,7 @@ func (os *onboardingState) renderReview(styles appStyles, width int) string {
 	return b.String()
 }
 
-func (os *onboardingState) renderComplete(styles appStyles, width int) string {
+func (os *onboardingState) renderComplete(styles appStyles, _ int) string {
 	var b strings.Builder
 	b.WriteString(styles.pill.Render(" Setup Complete "))
 	b.WriteString("\n\n")

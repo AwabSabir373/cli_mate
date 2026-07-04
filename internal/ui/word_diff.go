@@ -137,9 +137,13 @@ func (dc *diffContext) computeWordDiffs(lines []string) []string {
 				for _, w := range words {
 					switch w.kind {
 					case "added":
-						b.WriteString("{" + w.text + "}")
+						b.WriteString("{")
+					b.WriteString(w.text)
+					b.WriteString("}")
 					case "removed":
-						b.WriteString("[-" + w.text + "-]")
+						b.WriteString("[-")
+					b.WriteString(w.text)
+					b.WriteString("-]")
 					default:
 						b.WriteString(w.text)
 					}
