@@ -31,11 +31,11 @@ type Release struct {
 
 // CheckResult contains the result of an update check.
 type CheckResult struct {
-	Current     string
-	Latest      string
-	Available   bool
-	ReleaseURL  string
-	Error       error
+	Current    string
+	Latest     string
+	Available  bool
+	ReleaseURL string
+	Error      error
 }
 
 // CheckForUpdate queries GitHub for the latest release and compares it

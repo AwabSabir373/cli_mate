@@ -26,7 +26,7 @@ func (t *WorktreeCreateTool) Definition() Definition {
 		Name:        "worktree_create",
 		Description: "Create an isolated git worktree for safe experimentation.",
 		Schema: map[string]any{
-			"type":     "object",
+			"type": "object",
 			"properties": map[string]any{
 				"name": map[string]any{
 					"type":        "string",

@@ -8,9 +8,9 @@ import (
 
 // transcriptSelection manages row selection, expansion, and interaction in the transcript.
 type transcriptSelection struct {
-	selectedRow     int      // currently selected row index, -1 if none
+	selectedRow     int          // currently selected row index, -1 if none
 	expandedRows    map[int]bool // row indices that are expanded
-	hoveredRow      int      // row under mouse cursor, -1 if none
+	hoveredRow      int          // row under mouse cursor, -1 if none
 	dragging        bool
 	lastClickedTime time.Time
 }

@@ -32,10 +32,10 @@ type CheckResult struct {
 
 // githubPR is the subset of the GitHub PR API response we need.
 type githubPR struct {
-	Number    int    `json:"number"`
-	Title     string `json:"title"`
-	State     string `json:"state"`
-	Head      struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	State  string `json:"state"`
+	Head   struct {
 		Ref string `json:"ref"`
 		Sha string `json:"sha"`
 	} `json:"head"`

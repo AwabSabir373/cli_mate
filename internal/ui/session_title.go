@@ -11,11 +11,11 @@ import (
 
 // sessionTitleGenerator manages AI-generated session titles.
 type sessionTitleGenerator struct {
-	pending  bool
-	title    string
-	err      string
-	started  time.Time
-	digest   string
+	pending bool
+	title   string
+	err     string
+	started time.Time
+	digest  string
 }
 
 // newSessionTitleGenerator creates a new session title generator.

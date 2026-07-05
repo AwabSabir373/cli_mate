@@ -7,8 +7,11 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
+	"cli_mate/internal/agent/agentloop"
+	agentmemory "cli_mate/internal/agent/memory"
 	"cli_mate/internal/notify"
 	"cli_mate/internal/providers"
 	"cli_mate/internal/redaction"
@@ -28,6 +31,7 @@ type CodingRunner struct {
 	WorkspaceRoot string
 	Style         ResponseStyle
 	MaxIterations int
+	Memory        agentmemory.Store
 }
 
 type RunOptions struct {
@@ -56,6 +60,7 @@ type RunResult struct {
 	Messages []providers.Message
 	Answer   string
 	Steps    []Step
+	Events   []agentloop.Event
 }
 
 type Step struct {
@@ -114,6 +119,8 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 	messages := append([]providers.Message{}, opts.History...)
 	messages = append(messages, providers.Message{Role: "user", Content: opts.Prompt})
 	steps := []Step{}
+	auto := r.newAutonomousRuntime(opts, maxIterations)
+	auto.emit(agentloop.Event{Type: agentloop.EventUserRequest, Summary: opts.Prompt})
 
 	// Initialize compaction state for proactive context management.
 	compaction := newCompactionState(opts.MaxTokens, opts.CompactionPreserveLast, opts.OnUsage)
@@ -126,7 +133,7 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 
 	for iteration := 0; iteration < maxIterations; iteration++ {
 		turnRequestedModel := ""
-		
+
 		var toolDefs []providers.ToolDefinition
 		if !opts.DisableTools {
 			for _, tool := range r.Tools {
@@ -152,7 +159,26 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 		// Proactive compaction: summarize old messages before they blow the context.
 		messages = compaction.maybeCompact(ctx, r.Provider, messages, toolDefs)
 
+		loopMsg := auto.beforeModelTurn(ctx, messages, iteration, opts.DisableTools)
+		if result, handled := auto.runActiveVerification(ctx); handled {
+			stepText := "Autonomous verification: " + result.Summary
+			step := Step{Kind: "system", Text: stepText}
+			steps = append(steps, step)
+			if opts.OnStep != nil {
+				opts.OnStep(step)
+			}
+			if diagnostics := verificationDiagnostics(result); diagnostics != "" {
+				messages = append(messages, providers.Message{
+					Role:    "user",
+					Content: "Autonomous verification failed. Diagnose the root cause before retrying:\n\n" + diagnostics,
+				})
+			}
+			continue
+		}
 		reqMessages := r.requestMessages(messages, opts)
+		if strings.TrimSpace(loopMsg.Content) != "" {
+			reqMessages = append(reqMessages, loopMsg)
+		}
 		if opts.OnContext != nil {
 			total := 0
 			for _, m := range reqMessages {
@@ -173,15 +199,17 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 				Temperature: opts.Temperature,
 				MaxTokens:   opts.MaxTokens,
 			}, nil)
-			
+
 			if streamErr != nil {
 				if isImageRejectionError(streamErr) {
-					return RunResult{Messages: messages, Steps: steps}, fmt.Errorf("model rejected image input: %v (try a vision-capable model)", streamErr)
+					auto.stop(ctx, streamErr.Error())
+					return RunResult{Messages: messages, Steps: steps, Events: auto.events()}, fmt.Errorf("model rejected image input: %v (try a vision-capable model)", streamErr)
 				}
 				// Reactive compaction: if the error looks like a context-limit error, compact and retry once.
 				if compacted, retried, compactErr := compaction.recover(ctx, r.Provider, messages, toolDefs, streamErr.Error()); retried {
 					if compactErr != nil {
-						return RunResult{Messages: messages, Steps: steps}, compactErr
+						auto.stop(ctx, compactErr.Error())
+						return RunResult{Messages: messages, Steps: steps, Events: auto.events()}, compactErr
 					}
 					messages = compacted
 					continue // this will re-evaluate proactive compaction, which is fine
@@ -196,7 +224,8 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 
 			if err != nil {
 				if isImageRejectionError(err) {
-					return RunResult{Messages: messages, Steps: steps}, fmt.Errorf("model rejected image input during stream: %v", err)
+					auto.stop(ctx, err.Error())
+					return RunResult{Messages: messages, Steps: steps, Events: auto.events()}, fmt.Errorf("model rejected image input during stream: %v", err)
 				}
 				// If we got a stall error but no visible answer was forwarded, we can safely retry
 				if attempt < maxStreamStallRetries && answer == "" && len(nativeToolCalls) == 0 {
@@ -209,7 +238,8 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 		}
 
 		if err != nil {
-			return RunResult{Messages: messages, Steps: steps}, err
+			auto.stop(ctx, err.Error())
+			return RunResult{Messages: messages, Steps: steps, Events: auto.events()}, err
 		}
 
 		answer = strings.TrimSpace(answer)
@@ -227,6 +257,80 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 			})
 
 			var mutatedThisTurn bool
+			if opts.Hooks == nil && opts.ApproveTool == nil {
+				if calls, ok := parseNativeToolCalls(nativeToolCalls); ok && auto.canRunToolCallsInParallel(calls) {
+					results := r.executeToolBatchParallel(ctx, auto, calls)
+					for i, call := range calls {
+						result := results[i]
+						for _, loaded := range result.LoadedTools {
+							loadedTools[loaded] = true
+						}
+						if result.RequestedModel != "" {
+							turnRequestedModel = result.RequestedModel
+						}
+
+						step := Step{Kind: "tool", Text: formatToolStep(call, result)}
+						steps = append(steps, step)
+						if opts.OnStep != nil {
+							opts.OnStep(step)
+						}
+						redacted := redactToolResult(result)
+						messages = append(messages, providers.Message{
+							Role:       "tool",
+							Name:       nativeToolCalls[i].Name,
+							ToolCallID: nativeToolCalls[i].ID,
+							Content:    formatToolResultContent(redacted),
+						})
+
+						failureOutcome := guard.observeToolResult(call.Name, result.Error != "", result.Error)
+						if failureOutcome.Stop {
+							for j := i + 1; j < len(nativeToolCalls); j++ {
+								messages = append(messages, providers.Message{
+									Role:       "tool",
+									Name:       nativeToolCalls[j].Name,
+									ToolCallID: nativeToolCalls[j].ID,
+									Content:    "aborted: run halted by the repeated-failure guard",
+								})
+							}
+							stopAnswer := toolFailureStopAnswer(call.Name, failureOutcome.Count)
+							messages = append(messages, providers.Message{Role: "assistant", Content: stopAnswer})
+							auto.stop(ctx, stopAnswer)
+							return RunResult{Messages: messages, Answer: stopAnswer, Steps: steps, Events: auto.events()}, nil
+						}
+						if failureOutcome.InjectHint {
+							hint := toolFailureHint(call.Name, result.Error)
+							messages = append(messages, providers.Message{Role: "user", Content: hint})
+						}
+					}
+
+					callInfos := make([]toolCallInfo, 0, len(calls))
+					for _, call := range calls {
+						callInfos = append(callInfos, toolCallInfo{Name: call.Name})
+					}
+					if guard.observeTurn(answer, callInfos) {
+						stopAnswer := noOutputStopAnswer(guard.emptyTurns)
+						messages = append(messages, providers.Message{Role: "assistant", Content: stopAnswer})
+						auto.stop(ctx, stopAnswer)
+						return RunResult{Messages: messages, Answer: stopAnswer, Steps: steps, Events: auto.events()}, nil
+					}
+					if reminder := guard.planReminder(iteration + 1); reminder != "" {
+						messages = append(messages, providers.Message{Role: "user", Content: reminder})
+					}
+					if turnRequestedModel != "" && opts.ModelSwitcher != nil {
+						newProvider, err := opts.ModelSwitcher(ctx, turnRequestedModel)
+						if err != nil {
+							messages = append(messages, providers.Message{
+								Role:    "user",
+								Content: "Note: could not switch to requested model: " + err.Error() + ". Continuing on " + opts.Model + ".",
+							})
+						} else if newProvider != nil {
+							r.Provider = newProvider
+							opts.Model = turnRequestedModel
+						}
+					}
+					continue
+				}
+			}
 
 			for i, tc := range nativeToolCalls {
 				var args map[string]any
@@ -262,7 +366,12 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 					}
 				}
 
-				result := r.executeToolIfApproved(ctx, call, opts)
+				blockedResult, blocked := auto.beforeTool(ctx, call)
+				result := blockedResult
+				if !blocked {
+					result = r.executeToolIfApproved(ctx, call, opts)
+				}
+				auto.afterTool(ctx, call, result)
 
 				for _, loaded := range result.LoadedTools {
 					loadedTools[loaded] = true
@@ -314,7 +423,8 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 					}
 					stopAnswer := toolFailureStopAnswer(call.Name, failureOutcome.Count)
 					messages = append(messages, providers.Message{Role: "assistant", Content: stopAnswer})
-					return RunResult{Messages: messages, Answer: stopAnswer, Steps: steps}, nil
+					auto.stop(ctx, stopAnswer)
+					return RunResult{Messages: messages, Answer: stopAnswer, Steps: steps, Events: auto.events()}, nil
 				}
 				if failureOutcome.InjectHint {
 					hint := toolFailureHint(call.Name, result.Error)
@@ -324,7 +434,13 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 
 			// Self-correction: run verification AFTER ALL mutating tools in the batch
 			if opts.SelfCorrector != nil && mutatedThisTurn {
-				if diagnostics, err := opts.SelfCorrector.VerifyAfterMutation(ctx); err == nil && diagnostics != "" {
+				auto.beforeVerification("post-mutation verification")
+				diagnostics, verifyErr := opts.SelfCorrector.VerifyAfterMutation(ctx)
+				if verifyErr != nil {
+					diagnostics = verifyErr.Error()
+				}
+				auto.afterVerification(ctx, diagnostics)
+				if diagnostics != "" {
 					step := Step{Kind: "system", Text: "Self-correction: verification found issues"}
 					steps = append(steps, step)
 					if opts.OnStep != nil {
@@ -345,7 +461,8 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 			if guard.observeTurn(answer, callInfos) {
 				stopAnswer := noOutputStopAnswer(guard.emptyTurns)
 				messages = append(messages, providers.Message{Role: "assistant", Content: stopAnswer})
-				return RunResult{Messages: messages, Answer: stopAnswer, Steps: steps}, nil
+				auto.stop(ctx, stopAnswer)
+				return RunResult{Messages: messages, Answer: stopAnswer, Steps: steps, Events: auto.events()}, nil
 			}
 			if len(nativeToolCalls) == 0 {
 				if strings.HasSuffix(answer, ":") || strings.Contains(answer, "Let me check") {
@@ -353,12 +470,12 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 					continue
 				}
 			}
-			
+
 			// Inject plan reminder if needed
 			if reminder := guard.planReminder(iteration + 1); reminder != "" {
 				messages = append(messages, providers.Message{Role: "user", Content: reminder})
 			}
-			
+
 			// Handle Model Escalation
 			if turnRequestedModel != "" && opts.ModelSwitcher != nil {
 				newProvider, err := opts.ModelSwitcher(ctx, turnRequestedModel)
@@ -372,7 +489,7 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 					opts.Model = turnRequestedModel
 				}
 			}
-			
+
 			continue
 		}
 
@@ -382,7 +499,8 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 		}
 		if opts.DisableTools {
 			messages = append(messages, providers.Message{Role: "assistant", Content: answer})
-			return RunResult{Messages: messages, Answer: answer, Steps: steps}, nil
+			auto.complete(ctx, answer)
+			return RunResult{Messages: messages, Answer: answer, Steps: steps, Events: auto.events()}, nil
 		}
 
 		call, ok, err := parseToolCall(answer)
@@ -400,8 +518,25 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 			continue
 		}
 		if !ok {
+			if accepted, feedback := auto.acceptFinalAnswer(ctx, answer); !accepted {
+				messages = append(messages,
+					providers.Message{Role: "assistant", Content: answer},
+					providers.Message{Role: "user", Content: feedback},
+				)
+				step := Step{Kind: "system", Text: truncateToolText(feedback)}
+				steps = append(steps, step)
+				if opts.OnStep != nil {
+					opts.OnStep(step)
+				}
+				if auto.finalBlocks >= 3 {
+					auto.stop(ctx, feedback)
+					return RunResult{Messages: messages, Answer: feedback, Steps: steps, Events: auto.events()}, nil
+				}
+				continue
+			}
 			messages = append(messages, providers.Message{Role: "assistant", Content: answer})
-			return RunResult{Messages: messages, Answer: answer, Steps: steps}, nil
+			auto.complete(ctx, answer)
+			return RunResult{Messages: messages, Answer: answer, Steps: steps, Events: auto.events()}, nil
 		}
 
 		// Lifecycle hook: beforeTool
@@ -422,7 +557,12 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 			}
 		}
 
-		result := r.executeToolIfApproved(ctx, call, opts)
+		blockedResult, blocked := auto.beforeTool(ctx, call)
+		result := blockedResult
+		if !blocked {
+			result = r.executeToolIfApproved(ctx, call, opts)
+		}
+		auto.afterTool(ctx, call, result)
 
 		for _, loaded := range result.LoadedTools {
 			loadedTools[loaded] = true
@@ -456,7 +596,13 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 
 		// Self-correction: run verification after mutating tools
 		if opts.SelfCorrector != nil && isMutatingTool(call) && result.Error == "" {
-			if diagnostics, err := opts.SelfCorrector.VerifyAfterMutation(ctx); err == nil && diagnostics != "" {
+			auto.beforeVerification("post-mutation verification")
+			diagnostics, verifyErr := opts.SelfCorrector.VerifyAfterMutation(ctx)
+			if verifyErr != nil {
+				diagnostics = verifyErr.Error()
+			}
+			auto.afterVerification(ctx, diagnostics)
+			if diagnostics != "" {
 				step := Step{Kind: "system", Text: "Self-correction: verification found issues"}
 				steps = append(steps, step)
 				if opts.OnStep != nil {
@@ -474,13 +620,15 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 		if guard.observeTurn(answer, callInfos) {
 			stopAnswer := noOutputStopAnswer(guard.emptyTurns)
 			messages = append(messages, providers.Message{Role: "assistant", Content: stopAnswer})
-			return RunResult{Messages: messages, Answer: stopAnswer, Steps: steps}, nil
+			auto.stop(ctx, stopAnswer)
+			return RunResult{Messages: messages, Answer: stopAnswer, Steps: steps, Events: auto.events()}, nil
 		}
 		failureOutcome := guard.observeToolResult(call.Name, result.Error != "", result.Error)
 		if failureOutcome.Stop {
 			stopAnswer := toolFailureStopAnswer(call.Name, failureOutcome.Count)
 			messages = append(messages, providers.Message{Role: "assistant", Content: stopAnswer})
-			return RunResult{Messages: messages, Answer: stopAnswer, Steps: steps}, nil
+			auto.stop(ctx, stopAnswer)
+			return RunResult{Messages: messages, Answer: stopAnswer, Steps: steps, Events: auto.events()}, nil
 		}
 		if failureOutcome.InjectHint {
 			hint := toolFailureHint(call.Name, result.Error)
@@ -496,11 +644,12 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 
 	answer := fmt.Sprintf("Stopped after %d tool iterations. Narrow the request or inspect the last tool result.", maxIterations)
 	messages = append(messages, providers.Message{Role: "assistant", Content: answer})
+	auto.stop(ctx, answer)
 	// Notify on long-running task completion
 	if len(steps) > 5 {
 		notify.SendIfSupported("cli_mate", "Long-running task completed after "+fmt.Sprintf("%d", len(steps))+" steps")
 	}
-	return RunResult{Messages: messages, Answer: answer, Steps: steps}, nil
+	return RunResult{Messages: messages, Answer: answer, Steps: steps, Events: auto.events()}, nil
 }
 
 func (r *CodingRunner) availableToolList() string {
@@ -640,6 +789,57 @@ func (r *CodingRunner) executeToolIfApproved(ctx context.Context, call tools.Cal
 	return r.executeTool(ctx, call)
 }
 
+func parseNativeToolCalls(native []providers.ToolCall) ([]tools.Call, bool) {
+	calls := make([]tools.Call, 0, len(native))
+	for _, tc := range native {
+		var args map[string]any
+		if strings.TrimSpace(tc.Arguments) != "" {
+			payload := tc.Arguments
+			if first, ok := recoverableToolArguments(payload); ok {
+				payload = first
+			}
+			if err := json.Unmarshal([]byte(payload), &args); err != nil {
+				return nil, false
+			}
+		}
+		if args == nil {
+			args = map[string]any{}
+		}
+		calls = append(calls, tools.Call{Name: tc.Name, Argument: args})
+	}
+	return calls, true
+}
+
+func (r *CodingRunner) executeToolBatchParallel(ctx context.Context, auto *autonomousRuntime, calls []tools.Call) []tools.Result {
+	results := make([]tools.Result, len(calls))
+	run := make([]bool, len(calls))
+	for i, call := range calls {
+		if blockedResult, blocked := auto.beforeTool(ctx, call); blocked {
+			results[i] = blockedResult
+			continue
+		}
+		run[i] = true
+	}
+
+	var wg sync.WaitGroup
+	for i, call := range calls {
+		if !run[i] {
+			continue
+		}
+		wg.Add(1)
+		go func(i int, call tools.Call) {
+			defer wg.Done()
+			results[i] = r.executeTool(ctx, call)
+		}(i, call)
+	}
+	wg.Wait()
+
+	for i, call := range calls {
+		auto.afterTool(ctx, call, results[i])
+	}
+	return results
+}
+
 func recoverableToolArguments(arguments string) (string, bool) {
 	dec := json.NewDecoder(strings.NewReader(arguments))
 	var head json.RawMessage
@@ -687,7 +887,7 @@ func parseToolCall(text string) (tools.Call, bool, error) {
 		Arguments json.RawMessage `json:"arguments"`
 		Args      json.RawMessage `json:"args"`
 	}
-	
+
 	if first, ok := recoverableToolArguments(payload); ok {
 		payload = first
 	} else {

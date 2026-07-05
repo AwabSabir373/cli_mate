@@ -5,9 +5,9 @@ type layoutTier int
 
 const (
 	tierTiny   layoutTier = iota // < 58 columns
-	tierNarrow                    // 58-79 columns
-	tierMedium                    // 80-99 columns
-	tierFull                      // >= 100 columns
+	tierNarrow                   // 58-79 columns
+	tierMedium                   // 80-99 columns
+	tierFull                     // >= 100 columns
 )
 
 const (

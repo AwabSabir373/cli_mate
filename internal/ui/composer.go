@@ -7,9 +7,9 @@ import (
 
 // composerPastePreview represents a block of pasted text shown as a preview.
 type composerPastePreview struct {
-	start int // start position in the composed text
-	end   int // end position in the composed text
-	lines int // number of lines in the pasted content
+	start int    // start position in the composed text
+	end   int    // end position in the composed text
+	lines int    // number of lines in the pasted content
 	label string // display label
 }
 

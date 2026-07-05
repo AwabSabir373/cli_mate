@@ -11,9 +11,9 @@ import (
 
 // permissionOption represents a selectable choice in the permission prompt.
 type permissionOption struct {
-	label   string
-	hotkey  string
-	choice  string
+	label  string
+	hotkey string
+	choice string
 }
 
 // permissionPrompt manages the interactive approval UI.

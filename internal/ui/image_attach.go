@@ -25,7 +25,7 @@ type imageAttachState struct {
 	cursor      int
 	scrollOff   int
 	err         string
-	maxAttach   int // maximum number of attachments allowed
+	maxAttach   int   // maximum number of attachments allowed
 	maxSizeMB   int64 // maximum file size per attachment in MB
 }
 

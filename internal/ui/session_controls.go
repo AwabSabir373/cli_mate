@@ -21,10 +21,10 @@ const (
 
 // rewindCheckpoint represents a save point for rewind.
 type rewindCheckpoint struct {
-	index    int       // message index to rewind to
-	label    string    // user-provided or auto-generated label
+	index    int    // message index to rewind to
+	label    string // user-provided or auto-generated label
 	created  time.Time
-	messages int       // number of messages at this checkpoint
+	messages int // number of messages at this checkpoint
 }
 
 // sessionControls manages session-level operations.
@@ -389,4 +389,3 @@ func (sc *sessionControls) renderCompact(b *strings.Builder, styles appStyles, m
 	b.WriteString(styles.muted.Render("  ↑/↓ navigate · Enter confirm · Esc back"))
 	b.WriteString("\n")
 }
-

@@ -171,8 +171,3 @@ func execPath() string {
 	p, _ := exec.LookPath("powershell")
 	return p
 }
-
-// DefaultHooks returns a sensible default hook set (empty — no hooks by default).
-func DefaultHooks() []Hook {
-	return nil
-}

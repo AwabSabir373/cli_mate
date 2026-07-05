@@ -19,7 +19,7 @@ type mcpServerEntry struct {
 type mcpWizardStage int
 
 const (
-	mcpStageList     mcpWizardStage = iota
+	mcpStageList mcpWizardStage = iota
 	mcpStageAddName
 	mcpStageAddCommand
 	mcpStageAddArgs
@@ -29,17 +29,17 @@ const (
 
 // mcpManager manages MCP server configuration via UI.
 type mcpManager struct {
-	visible         bool
-	stage           mcpWizardStage
-	servers         []config.MCPConfig
-	cursor          int
-	scrollOff       int
-	editEntry       mcpServerEntry
-	editEnvKey      string
-	err             string
-	builtinTotal    int            // total built-in tools registered
-	builtinEnabled  int            // active (enabled) built-in tools
-	toolCounts      map[string]int // live tool counts per server name
+	visible        bool
+	stage          mcpWizardStage
+	servers        []config.MCPConfig
+	cursor         int
+	scrollOff      int
+	editEntry      mcpServerEntry
+	editEnvKey     string
+	err            string
+	builtinTotal   int            // total built-in tools registered
+	builtinEnabled int            // active (enabled) built-in tools
+	toolCounts     map[string]int // live tool counts per server name
 }
 
 // newMCPManager creates a new MCP manager.

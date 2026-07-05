@@ -1,6 +1,30 @@
 package agent
 
-import "cli_mate/pkg/tokenizer"
+import (
+	"time"
+
+	"cli_mate/internal/providers"
+	"cli_mate/pkg/tokenizer"
+)
+
+type Role string
+
+const (
+	RoleSystem    Role = "system"
+	RoleUser      Role = "user"
+	RoleAssistant Role = "assistant"
+	RoleTool      Role = "tool"
+)
+
+type Message struct {
+	ID         string
+	Role       Role
+	Content    string
+	ToolCalls  []providers.ToolCall
+	ToolCallID string
+	Name       string
+	CreatedAt  time.Time
+}
 
 type ContextWindow struct {
 	MaxTokens     int

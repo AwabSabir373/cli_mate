@@ -118,10 +118,10 @@ func (t *ApplyPatchTool) Execute(_ context.Context, call Call) (Result, error) {
 }
 
 type patchFile struct {
-	Path   string
-	IsNew  bool
-	IsDel  bool
-	Hunks  []hunk
+	Path  string
+	IsNew bool
+	IsDel bool
+	Hunks []hunk
 }
 
 type hunk struct {
@@ -133,7 +133,7 @@ type hunk struct {
 }
 
 type hunkLine struct {
-	Prefix byte   // '+', '-', or ' '
+	Prefix byte // '+', '-', or ' '
 	Text   string
 }
 

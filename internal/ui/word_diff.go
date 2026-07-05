@@ -33,8 +33,8 @@ func changedSpan(a, b []rune) (int, int, int) {
 
 // diffWord represents a word-level diff segment.
 type diffWord struct {
-	text  string
-	kind  string // "same", "added", "removed"
+	text string
+	kind string // "same", "added", "removed"
 }
 
 // wordDiff computes word-level differences between two strings.
@@ -138,12 +138,12 @@ func (dc *diffContext) computeWordDiffs(lines []string) []string {
 					switch w.kind {
 					case "added":
 						b.WriteString("{")
-					b.WriteString(w.text)
-					b.WriteString("}")
+						b.WriteString(w.text)
+						b.WriteString("}")
 					case "removed":
 						b.WriteString("[-")
-					b.WriteString(w.text)
-					b.WriteString("-]")
+						b.WriteString(w.text)
+						b.WriteString("-]")
 					default:
 						b.WriteString(w.text)
 					}
@@ -286,4 +286,3 @@ func highlightWordDiff(line string, styles appStyles) []wordDiffToken {
 
 	return tokens
 }
-

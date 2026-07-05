@@ -244,5 +244,3 @@ func matchDoubleStar(pattern, name string) (bool, error) {
 
 	return false, nil
 }
-
-

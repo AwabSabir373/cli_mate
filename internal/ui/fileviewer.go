@@ -177,5 +177,3 @@ func (fv *FileViewer) Render(styles appStyles) string {
 
 	return styles.panel.Width(fv.width - 4).Render(b.String())
 }
-
-

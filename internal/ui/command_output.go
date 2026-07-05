@@ -33,14 +33,14 @@ type commandOutputEntry struct {
 
 // commandOutputView manages the command output display panel.
 type commandOutputView struct {
-	visible      bool
-	entries      []commandOutputEntry
-	cursor       int
-	scrollOff    int
-	expanded     map[int]bool
-	filter       string // filter by command name
-	showTimings  bool
-	autoScroll   bool
+	visible     bool
+	entries     []commandOutputEntry
+	cursor      int
+	scrollOff   int
+	expanded    map[int]bool
+	filter      string // filter by command name
+	showTimings bool
+	autoScroll  bool
 }
 
 // newCommandOutputView creates a new command output view.
@@ -236,7 +236,7 @@ func renderCommandOutput(cov *commandOutputView, styles appStyles, width int) st
 				output += fmt.Sprintf("\n... %d more lines ...", len(outputLines)-maxOutputLines)
 			}
 			if output != "" {
-				b.WriteString(styles.softPanel.Width(width-12).Render(
+				b.WriteString(styles.softPanel.Width(width - 12).Render(
 					styles.code.Render(output)),
 				)
 				b.WriteString("\n")
@@ -256,7 +256,7 @@ func renderCommandOutput(cov *commandOutputView, styles appStyles, width int) st
 	b.WriteString("\n")
 	b.WriteString(styles.muted.Render("  ↑/↓ navigate · Enter expand · C copy · T timings · Del remove · Esc close"))
 	b.WriteString("\n")
-	return styles.panel.Width(width-4).Render(b.String())
+	return styles.panel.Width(width - 4).Render(b.String())
 }
 
 // formatBashOutput formats raw bash output for display.

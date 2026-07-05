@@ -21,8 +21,8 @@ const (
 // Job is a stored scheduled job.
 type Job struct {
 	ID        string    `json:"id"`
-	Expr      string    `json:"expr"`      // Simple cron expression: "@hourly", "@daily", "@weekly", or "*/5 * * * *"
-	Prompt    string    `json:"prompt"`    // The prompt to send to the agent
+	Expr      string    `json:"expr"`   // Simple cron expression: "@hourly", "@daily", "@weekly", or "*/5 * * * *"
+	Prompt    string    `json:"prompt"` // The prompt to send to the agent
 	Cwd       string    `json:"cwd,omitempty"`
 	Model     string    `json:"model,omitempty"`
 	Status    string    `json:"status"`

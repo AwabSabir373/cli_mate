@@ -15,10 +15,10 @@ type renderCacheEntry struct {
 
 // renderCache provides TTL-based caching for markdown rendering.
 type renderCache struct {
-	mu       sync.RWMutex
-	entries  map[string]*renderCacheEntry
-	ttl      time.Duration
-	maxSize  int
+	mu      sync.RWMutex
+	entries map[string]*renderCacheEntry
+	ttl     time.Duration
+	maxSize int
 }
 
 // newRenderCache creates a new render cache with the given TTL and max size.

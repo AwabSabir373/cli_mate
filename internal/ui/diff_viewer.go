@@ -29,8 +29,8 @@ type DiffFile struct {
 
 // DiffViewer displays file diffs.
 type DiffViewer struct {
-	visible  bool
-	files    []DiffFile
+	visible   bool
+	files     []DiffFile
 	selection int
 	scrollOff int
 }

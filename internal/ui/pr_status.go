@@ -10,30 +10,30 @@ import (
 type PRStatus string
 
 const (
-	PROpen      PRStatus = "open"
-	PRMerged    PRStatus = "merged"
-	PRClosed    PRStatus = "closed"
-	PRDraft     PRStatus = "draft"
-	PRApproved  PRStatus = "approved"
+	PROpen             PRStatus = "open"
+	PRMerged           PRStatus = "merged"
+	PRClosed           PRStatus = "closed"
+	PRDraft            PRStatus = "draft"
+	PRApproved         PRStatus = "approved"
 	PRChangesRequested PRStatus = "changes_requested"
 )
 
 // PRInfo contains information about a pull request.
 type PRInfo struct {
-	Number      int
-	Title       string
-	Author      string
-	Branch      string
-	BaseBranch  string
-	Status      PRStatus
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	Additions   int
-	Deletions   int
+	Number       int
+	Title        string
+	Author       string
+	Branch       string
+	BaseBranch   string
+	Status       PRStatus
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	Additions    int
+	Deletions    int
 	ChangedFiles int
-	CIStatus    string // "passing", "failing", "pending", ""
-	ReviewCount int
-	Approved    bool
+	CIStatus     string // "passing", "failing", "pending", ""
+	ReviewCount  int
+	Approved     bool
 }
 
 // PRDisplay manages the PR status display for the sidebar.

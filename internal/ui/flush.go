@@ -11,9 +11,9 @@ const (
 
 // flushBatcher batches render updates to avoid excessive redraws.
 type flushBatcher struct {
-	interval time.Duration
-	maxLines int
-	pending  int
+	interval  time.Duration
+	maxLines  int
+	pending   int
 	lastFlush time.Time
 	timer     *time.Timer
 }

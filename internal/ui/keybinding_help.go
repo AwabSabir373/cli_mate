@@ -6,9 +6,9 @@ import (
 
 // KeyBinding represents a keyboard shortcut.
 type KeyBinding struct {
-	Keys        string
-	Action      string
-	Category    string
+	Keys     string
+	Action   string
+	Category string
 }
 
 // KeybindingHelp displays keyboard shortcuts.

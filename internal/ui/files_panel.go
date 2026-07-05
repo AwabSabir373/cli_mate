@@ -9,19 +9,19 @@ import (
 
 // FileBrowser displays a file tree for navigating the workspace.
 type FileBrowser struct {
-	visible    bool
-	root       string
-	files      []FileEntry
-	selection  int
-	scrollOff  int
+	visible   bool
+	root      string
+	files     []FileEntry
+	selection int
+	scrollOff int
 }
 
 // FileEntry represents a file or directory in the browser.
 type FileEntry struct {
-	Name     string
-	Path     string
-	IsDir    bool
-	Indent   int
+	Name      string
+	Path      string
+	IsDir     bool
+	Indent    int
 	GitStatus string // "modified", "added", "deleted", "untracked", ""
 }
 

@@ -13,7 +13,7 @@ import (
 type setupStage int
 
 const (
-	setupStageWelcome    setupStage = iota
+	setupStageWelcome setupStage = iota
 	setupStageProvider
 	setupStageAPIKey
 	setupStageBaseURL
@@ -24,17 +24,17 @@ const (
 
 // onboardingState manages the multi-step onboarding wizard.
 type onboardingState struct {
-	active      bool
-	stage       setupStage
-	provider    string
-	apiKey      string
-	baseURL     string
-	model       string
-	cursor      int // selection cursor within the current stage
-	err         string
-	providers   []string // available provider names
-	models      []string // available models for selected provider
-	skipAPIKey  bool     // for providers that don't need API key
+	active     bool
+	stage      setupStage
+	provider   string
+	apiKey     string
+	baseURL    string
+	model      string
+	cursor     int // selection cursor within the current stage
+	err        string
+	providers  []string // available provider names
+	models     []string // available models for selected provider
+	skipAPIKey bool     // for providers that don't need API key
 }
 
 // newOnboardingState creates a new onboarding state.

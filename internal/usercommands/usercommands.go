@@ -133,10 +133,10 @@ func parseCommandFile(path, name string, project bool) (Command, error) {
 	defer f.Close()
 
 	var (
-		description string
-		model       string
-		body        strings.Builder
-		inFrontmatter bool
+		description     string
+		model           string
+		body            strings.Builder
+		inFrontmatter   bool
 		frontmatterDone bool
 	)
 

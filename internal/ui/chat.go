@@ -237,8 +237,8 @@ func runChatAsync(parent context.Context, app *App, profile config.Profile, prov
 			// Token usage from compaction summarizer calls.
 			_ = u
 		},
-		DisableTools:   casualPrompt,
-		SelfCorrector:  selfCorrector,
+		DisableTools:  casualPrompt,
+		SelfCorrector: selfCorrector,
 		ApproveTool: func(call tools.Call) bool {
 			currentProfile := app.activeProfile()
 			path, _ := call.Argument["path"].(string)

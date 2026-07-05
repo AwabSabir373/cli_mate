@@ -9,13 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"cli_mate/internal/providers"
 	"cli_mate/internal/tools"
 )
 
 const (
 	defaultMaxSelfCorrectAttempts = 3
-	selfCorrectTimeout            = 60 * time.Second
+	selfCorrectTimeout            = 5 * time.Minute
 )
 
 // SelfCorrector runs verification after mutating tool calls and feeds errors
@@ -97,8 +96,10 @@ func (sc *SelfCorrector) detectChecks() []checkCommand {
 	// Go project
 	if fileExists(filepath.Join(root, "go.mod")) {
 		checks = append(checks,
+			checkCommand{Name: "gofmt", Command: gofmtSelfCorrectCommand()},
+			checkCommand{Name: "go test", Command: "go test ./..."},
 			checkCommand{Name: "go vet", Command: "go vet ./..."},
-			checkCommand{Name: "go build", Command: "go build ./..."},
+			checkCommand{Name: "go build", Command: "go build ./cmd/cli_mate"},
 		)
 	}
 
@@ -153,29 +154,6 @@ func (sc *SelfCorrector) runCheck(ctx context.Context, check checkCommand) (stri
 	return string(output), err
 }
 
-// HandleSelfCorrection is called after the agent loop finishes a tool call. If
-// the tool was a mutation and diagnostics fail, it appends a correction prompt
-// to the messages and signals that another iteration should run.
-func HandleSelfCorrection(
-	corrector *SelfCorrector,
-	messages []providers.Message,
-	call tools.Call,
-	result tools.Result,
-) ([]providers.Message, bool) {
-	if corrector == nil || !corrector.IsEnabled() {
-		return messages, false
-	}
-	if !isMutatingTool(call) {
-		return messages, false
-	}
-	// Don't self-correct if the tool itself failed
-	if result.Error != "" {
-		return messages, false
-	}
-
-	return messages, true // signal: verification should run
-}
-
 // shellCommand determines how to run a shell command based on OS.
 func shellCommand(command string) (string, []string) {
 	if strings.Contains(os.Getenv("OS"), "Windows") || filepath.VolumeName(os.Getenv("SystemDrive")) != "" {
@@ -188,4 +166,15 @@ func shellCommand(command string) (string, []string) {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func gofmtSelfCorrectCommand() string {
+	if isWindowsShell() {
+		return "$files = git ls-files '*.go'; if ($files) { gofmt -w $files }"
+	}
+	return "gofmt -w $(git ls-files '*.go')"
+}
+
+func isWindowsShell() bool {
+	return strings.Contains(os.Getenv("OS"), "Windows") || filepath.VolumeName(os.Getenv("SystemDrive")) != ""
 }

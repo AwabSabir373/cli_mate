@@ -5,19 +5,17 @@ import (
 	"unicode"
 )
 
-
-
 // markdownRenderer renders markdown text to terminal-formatted output.
 type markdownRenderer struct {
-	width   int
-	styles  appStyles
+	width  int
+	styles appStyles
 }
 
 // newMarkdownRenderer creates a new markdown renderer.
 func newMarkdownRenderer(width int, styles appStyles) *markdownRenderer {
 	return &markdownRenderer{
-		width:   width,
-		styles:  styles,
+		width:  width,
+		styles: styles,
 	}
 }
 

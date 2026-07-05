@@ -81,10 +81,10 @@ func parseManifestFile(path, name string, location Location) (*Manifest, error) 
 	}
 
 	var (
-		description string
-		tools       string
-		body        strings.Builder
-		inFrontmatter bool
+		description     string
+		tools           string
+		body            strings.Builder
+		inFrontmatter   bool
 		frontmatterDone bool
 	)
 

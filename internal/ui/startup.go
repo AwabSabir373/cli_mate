@@ -22,15 +22,15 @@ const (
 
 // startupState manages the first-run and workspace initialization flow.
 type startupState struct {
-	visible     bool
-	phase       startPhase
-	workspace   string
-	configPath  string
-	hasConfig   bool
-	hasProfile  bool
-	cursor      int
-	err         string
-	isFirstRun  bool
+	visible    bool
+	phase      startPhase
+	workspace  string
+	configPath string
+	hasConfig  bool
+	hasProfile bool
+	cursor     int
+	err        string
+	isFirstRun bool
 }
 
 // newStartupState creates a new startup state.
@@ -190,7 +190,7 @@ func renderStartup(ss *startupState, styles appStyles, width int) string {
 		ss.renderComplete(&b, styles)
 	}
 
-	return styles.panel.Width(width-4).Render(b.String())
+	return styles.panel.Width(width - 4).Render(b.String())
 }
 
 func (ss *startupState) renderWelcome(b *strings.Builder, styles appStyles) {

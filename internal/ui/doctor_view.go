@@ -17,10 +17,10 @@ import (
 type checkStatus string
 
 const (
-	checkPass  checkStatus = "pass"
-	checkFail  checkStatus = "fail"
-	checkWarn  checkStatus = "warn"
-	checkSkip  checkStatus = "skip"
+	checkPass checkStatus = "pass"
+	checkFail checkStatus = "fail"
+	checkWarn checkStatus = "warn"
+	checkSkip checkStatus = "skip"
 )
 
 // diagnosticCheck represents a single diagnostic check.
@@ -366,7 +366,7 @@ func renderDoctorView(dv *doctorView, styles appStyles, width int) string {
 	b.WriteString(styles.muted.Render("  ↑/↓ navigate · R rerun · Esc close"))
 	b.WriteString("\n")
 
-	return styles.panel.Width(width-4).Render(b.String())
+	return styles.panel.Width(width - 4).Render(b.String())
 }
 
 // renderDoctorSummary renders a compact diagnostic summary for display.

@@ -9,7 +9,7 @@ import (
 type pickerKind int
 
 const (
-	pickerFiles    pickerKind = iota
+	pickerFiles pickerKind = iota
 	pickerSessions
 	pickerModels
 	pickerThemes
@@ -39,7 +39,7 @@ type genericPicker struct {
 	query       string
 	searchMode  bool // when true, show search input instead of item count
 	maxVisible  int
-	allowCreate bool // allow creating a custom item (e.g., custom model)
+	allowCreate bool         // allow creating a custom item (e.g., custom model)
 	onSelect    func(string) // callback when item is selected
 }
 

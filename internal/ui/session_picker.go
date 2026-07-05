@@ -14,12 +14,12 @@ import (
 
 // sessionPicker manages the interactive session selection UI.
 type sessionPicker struct {
-	visible     bool
-	sessions    []storage.SessionRecord
-	cursor      int
-	scrollOff   int
-	loaded      bool
-	err         string
+	visible   bool
+	sessions  []storage.SessionRecord
+	cursor    int
+	scrollOff int
+	loaded    bool
+	err       string
 }
 
 // sessionResumeMsg carries the result of a session resume selection.

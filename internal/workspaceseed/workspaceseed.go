@@ -177,18 +177,18 @@ func listTopLevel(dir string) []string {
 
 	var paths []string
 	skipped := map[string]bool{
-		".git":          true,
-		".idea":         true,
-		".vscode":       true,
-		"node_modules":  true,
-		"vendor":        true,
-		".openclaude":   true,
-		".cli_mate":     true,
-		".mimocode":     true,
-		".claude":       true,
-		".codex":        true,
-		".opencode":     true,
-		".agents":       true,
+		".git":         true,
+		".idea":        true,
+		".vscode":      true,
+		"node_modules": true,
+		"vendor":       true,
+		".openclaude":  true,
+		".cli_mate":    true,
+		".mimocode":    true,
+		".claude":      true,
+		".codex":       true,
+		".opencode":    true,
+		".agents":      true,
 	}
 
 	for _, entry := range entries {

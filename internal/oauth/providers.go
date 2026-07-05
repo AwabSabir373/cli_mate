@@ -55,13 +55,13 @@ func (r *Registry) ResolveConfig(name string, env map[string]string) (Config, Fl
 	}
 
 	return Config{
-		ClientID:                   clientID,
-		ClientSecret:               clientSecret,
-		AuthorizationEndpoint:      authURL,
-		TokenEndpoint:              tokenURL,
+		ClientID:                    clientID,
+		ClientSecret:                clientSecret,
+		AuthorizationEndpoint:       authURL,
+		TokenEndpoint:               tokenURL,
 		DeviceAuthorizationEndpoint: deviceURL,
-		IssuerURL:                  issuerURL,
-		Scopes:                     scopes,
+		IssuerURL:                   issuerURL,
+		Scopes:                      scopes,
 	}, flow, nil
 }
 

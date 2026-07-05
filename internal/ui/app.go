@@ -145,14 +145,14 @@ type App struct {
 	specMode            *specMode
 	subchatManager      *subchatManager
 	// Remaining feature components (phase 2)
-	autocomplete     *autocompleteState
-	picker           *genericPicker
-	sessionCtrls     *sessionControls
-	sessionTitle     *sessionTitleGenerator
-	commandOutput    *commandOutputView
-	startup          *startupState
-	imageAttach      *imageAttachState
-	doctor           *doctorView
+	autocomplete  *autocompleteState
+	picker        *genericPicker
+	sessionCtrls  *sessionControls
+	sessionTitle  *sessionTitleGenerator
+	commandOutput *commandOutputView
+	startup       *startupState
+	imageAttach   *imageAttachState
+	doctor        *doctorView
 }
 
 // SetProgram wires the Bubble Tea program back into the app so background

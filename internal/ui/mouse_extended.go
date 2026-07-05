@@ -6,11 +6,11 @@ import (
 
 // dragState tracks mouse drag operations.
 type dragState struct {
-	active    bool
-	startX    int
-	startY    int
-	currentX  int
-	currentY  int
+	active      bool
+	startX      int
+	startY      int
+	currentX    int
+	currentY    int
 	scrollAccum int // accumulated scroll delta
 }
 

@@ -94,7 +94,7 @@ func (hm *hoverManager) updateHover(
 	// Hit test transcript rows
 	if currentY >= 0 && currentY < transcriptRows {
 		hm.target = hoverTarget{
-			kind: hoverTranscript,
+			kind:  hoverTranscript,
 			label: fmt.Sprintf("Row %d", currentY),
 		}
 	}

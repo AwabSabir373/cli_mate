@@ -9,7 +9,7 @@ import (
 )
 
 const lockRetryDelay = 100 * time.Millisecond
-const lockMaxRetries = 50 // 5 seconds total
+const lockMaxRetries = 50                // 5 seconds total
 const lockMaxStaleAge = 30 * time.Second // locks older than this are considered stale
 
 // acquireFileLock acquires a cross-process lock via a lock file.

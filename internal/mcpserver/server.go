@@ -13,10 +13,10 @@ import (
 
 // Server handles the MCP JSON-RPC 2.0 communication over stdio.
 type Server struct {
-	reader  *bufio.Reader
-	writer  io.Writer
-	mu      sync.Mutex
-	tools   map[string]ToolHandler
+	reader *bufio.Reader
+	writer io.Writer
+	mu     sync.Mutex
+	tools  map[string]ToolHandler
 
 	// cancellation map
 	activeReqs   map[int]context.CancelFunc
@@ -95,10 +95,10 @@ type jsonrpcRequest struct {
 }
 
 type jsonrpcResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      *int            `json:"id"`
-	Result  any             `json:"result,omitempty"`
-	Error   *jsonrpcError   `json:"error,omitempty"`
+	JSONRPC string        `json:"jsonrpc"`
+	ID      *int          `json:"id"`
+	Result  any           `json:"result,omitempty"`
+	Error   *jsonrpcError `json:"error,omitempty"`
 }
 
 type jsonrpcError struct {
@@ -152,10 +152,10 @@ func (s *Server) handleRequest(req *jsonrpcRequest) {
 	if req.ID == nil {
 		return
 	}
-	
+
 	reqID := *req.ID
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	s.activeReqsMu.Lock()
 	s.activeReqs[reqID] = cancel
 	s.activeReqsMu.Unlock()

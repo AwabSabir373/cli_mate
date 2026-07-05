@@ -10,10 +10,10 @@ import (
 
 // CustomMCPFile represents the schema for the custom mcp.yml configuration.
 type CustomMCPFile struct {
-	Name       string             `yaml:"name"`
-	Version    string             `yaml:"version"`
-	Schema     string             `yaml:"schema"`
-	MCPServers []CustomMCPServer  `yaml:"mcpServers"`
+	Name       string            `yaml:"name"`
+	Version    string            `yaml:"version"`
+	Schema     string            `yaml:"schema"`
+	MCPServers []CustomMCPServer `yaml:"mcpServers"`
 }
 
 // CustomMCPServer represents a single MCP server definition inside mcp.yml.

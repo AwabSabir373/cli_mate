@@ -9,10 +9,10 @@ import (
 
 // MCPServerInfo represents a connected MCP server.
 type MCPServerInfo struct {
-	Name    string
-	Status  string // "connected", "disconnected", "error", "configured"
-	Tools   int
-	Error   string
+	Name   string
+	Status string // "connected", "disconnected", "error", "configured"
+	Tools  int
+	Error  string
 }
 
 // MCPWizardStep represents a step in the MCP setup wizard.
@@ -27,14 +27,14 @@ const (
 
 // MCPManagerView displays MCP server status and allows management with a setup wizard.
 type MCPManagerView struct {
-	visible     bool
-	servers     []MCPServerInfo
-	wizard      bool
-	wizardStep  MCPWizardStep
-	newName     string
-	newCommand  string
-	newArgs     string
-	newEnv      map[string]string
+	visible    bool
+	servers    []MCPServerInfo
+	wizard     bool
+	wizardStep MCPWizardStep
+	newName    string
+	newCommand string
+	newArgs    string
+	newEnv     map[string]string
 }
 
 // NewMCPManagerView creates a new MCP manager view.

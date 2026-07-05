@@ -1,24 +1,20 @@
 package redaction
 
 import (
-	"fmt"
 	"net/url"
-	"reflect"
 	"regexp"
 	"strings"
 	"unicode"
 )
 
 const (
-	RedactedSecret  = "[REDACTED]"
-	maxDepthDefault = 16
+	RedactedSecret = "[REDACTED]"
 )
 
 type Options struct {
 	Replacement        string
 	ExtraSensitiveKeys []string
 	ExtraSecretValues  []string
-	MaxDepth           int
 }
 
 var sensitiveKeys = map[string]struct{}{
@@ -177,116 +173,6 @@ func RedactString(value string, options Options) string {
 	return redacted
 }
 
-func RedactValue(value any, options Options) any {
-	return redactReflect(reflect.ValueOf(value), redactionContext{
-		options:     options,
-		replacement: replacement(options),
-		maxDepth:    maxDepth(options),
-		seen:        map[uintptr]struct{}{},
-	}, 0)
-}
-
-type redactionContext struct {
-	options     Options
-	replacement string
-	maxDepth    int
-	seen        map[uintptr]struct{}
-}
-
-func redactReflect(value reflect.Value, ctx redactionContext, depth int) any {
-	if !value.IsValid() {
-		return nil
-	}
-	for value.Kind() == reflect.Interface {
-		if value.IsNil() {
-			return nil
-		}
-		value = value.Elem()
-	}
-	if depth >= ctx.maxDepth {
-		return "[MaxDepth]"
-	}
-
-	switch value.Kind() {
-	case reflect.String:
-		return RedactString(value.String(), ctx.options)
-	case reflect.Bool:
-		return value.Bool()
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return value.Int()
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return value.Uint()
-	case reflect.Float32, reflect.Float64:
-		return value.Float()
-	case reflect.Pointer:
-		if value.IsNil() {
-			return nil
-		}
-		ptr := value.Pointer()
-		if _, ok := ctx.seen[ptr]; ok {
-			return "[Circular]"
-		}
-		ctx.seen[ptr] = struct{}{}
-		out := redactReflect(value.Elem(), ctx, depth+1)
-		delete(ctx.seen, ptr)
-		return out
-	case reflect.Map:
-		if value.IsNil() {
-			return nil
-		}
-		ptr := value.Pointer()
-		if _, ok := ctx.seen[ptr]; ok {
-			return "[Circular]"
-		}
-		ctx.seen[ptr] = struct{}{}
-		out := make(map[string]any, value.Len())
-		iter := value.MapRange()
-		for iter.Next() {
-			key := fmt.Sprint(redactReflect(iter.Key(), ctx, depth+1))
-			if IsSensitiveKey(key, ctx.options) {
-				out[key] = ctx.replacement
-				continue
-			}
-			out[key] = redactReflect(iter.Value(), ctx, depth+1)
-		}
-		delete(ctx.seen, ptr)
-		return out
-	case reflect.Slice, reflect.Array:
-		out := make([]any, value.Len())
-		for i := 0; i < value.Len(); i++ {
-			out[i] = redactReflect(value.Index(i), ctx, depth+1)
-		}
-		return out
-	case reflect.Struct:
-		out := make(map[string]any, value.NumField())
-		valueType := value.Type()
-		for i := 0; i < value.NumField(); i++ {
-			field := valueType.Field(i)
-			if field.PkgPath != "" {
-				continue
-			}
-			name := field.Name
-			if tag := field.Tag.Get("json"); tag != "" {
-				name = strings.Split(tag, ",")[0]
-				if name == "-" {
-					continue
-				}
-			}
-			if IsSensitiveKey(name, ctx.options) {
-				out[name] = ctx.replacement
-				continue
-			}
-			out[name] = redactReflect(value.Field(i), ctx, depth+1)
-		}
-		return out
-	default:
-		if value.CanInterface() {
-			return value.Interface()
-		}
-		return fmt.Sprint(value)
-	}
-}
-
 func redactURLPasswords(value string, replacement string) string {
 	return urlWithCreds.ReplaceAllStringFunc(value, func(candidate string) string {
 		parsed, err := url.Parse(candidate)
@@ -324,11 +210,4 @@ func replacement(options Options) string {
 		return options.Replacement
 	}
 	return RedactedSecret
-}
-
-func maxDepth(options Options) int {
-	if options.MaxDepth > 0 {
-		return options.MaxDepth
-	}
-	return maxDepthDefault
 }

@@ -96,8 +96,8 @@ func (t *DiscoverSkillsTool) Definition() Definition {
 		Name:        t.Name(),
 		Description: "List available skills in the workspace. Skills are stored in .cli_mate/skills/ directory.",
 		Schema: map[string]any{
-			"type":       "object",
-			"properties": map[string]any{},
+			"type":        "object",
+			"properties":  map[string]any{},
 			"description": "Discover available skills in the workspace.",
 		},
 	}

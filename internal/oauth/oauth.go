@@ -61,14 +61,14 @@ func (t Token) NeedsRefresh(now int64, buffer int64) bool {
 
 // Config configures an OAuth 2.0 authorization server interaction.
 type Config struct {
-	ClientID                   string
-	ClientSecret               string
-	AuthorizationEndpoint      string
-	TokenEndpoint              string
+	ClientID                    string
+	ClientSecret                string
+	AuthorizationEndpoint       string
+	TokenEndpoint               string
 	DeviceAuthorizationEndpoint string
-	IssuerURL                  string
-	Scopes                     []string
-	ExtraAuthParams            map[string]string
+	IssuerURL                   string
+	Scopes                      []string
+	ExtraAuthParams             map[string]string
 }
 
 // PKCE holds a verifier/challenge pair for authorization-code flow.

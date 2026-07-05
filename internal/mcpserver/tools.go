@@ -25,7 +25,7 @@ func GetToolDefinitions() []map[string]any {
 			"name":        "search_code",
 			"description": "Searches for a specific string across the project files.",
 			"inputSchema": map[string]any{
-				"type": "object",
+				"type":     "object",
 				"required": []string{"query"},
 				"properties": map[string]any{
 					"query": map[string]any{
@@ -39,7 +39,7 @@ func GetToolDefinitions() []map[string]any {
 			"name":        "read_file",
 			"description": "Reads the contents of a specific file.",
 			"inputSchema": map[string]any{
-				"type": "object",
+				"type":     "object",
 				"required": []string{"path"},
 				"properties": map[string]any{
 					"path": map[string]any{
@@ -90,12 +90,12 @@ func handleProjectTree(ctx context.Context, params map[string]any) (any, error) 
 		if err != nil {
 			return err
 		}
-		
+
 		// Skip hidden directories like .git or .idea
 		if d.IsDir() && strings.HasPrefix(d.Name(), ".") && d.Name() != "." {
 			return filepath.SkipDir
 		}
-		
+
 		// Skip common binary/build directories
 		if d.IsDir() && (d.Name() == "node_modules" || d.Name() == "vendor" || d.Name() == "dist") {
 			return filepath.SkipDir
@@ -126,7 +126,7 @@ func handleSearchCode(ctx context.Context, params map[string]any) (any, error) {
 	}
 
 	var results []string
-	
+
 	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
 		select {
 		case <-ctx.Done():
@@ -143,7 +143,7 @@ func handleSearchCode(ctx context.Context, params map[string]any) (any, error) {
 		if d.IsDir() && (d.Name() == "node_modules" || d.Name() == "vendor" || d.Name() == "dist") {
 			return filepath.SkipDir
 		}
-		
+
 		if !d.IsDir() {
 			file, err := os.Open(path)
 			if err != nil {

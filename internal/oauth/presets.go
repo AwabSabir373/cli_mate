@@ -2,25 +2,25 @@ package oauth
 
 // providerPreset defines the default OAuth configuration for a provider.
 type providerPreset struct {
-	ClientID    string
-	AuthURL     string
-	TokenURL    string
-	DeviceURL   string
-	IssuerURL   string
-	Scopes      []string
-	Flow        Flow
+	ClientID  string
+	AuthURL   string
+	TokenURL  string
+	DeviceURL string
+	IssuerURL string
+	Scopes    []string
+	Flow      Flow
 }
 
 // builtinOAuthPresets contains pre-configured OAuth settings for known providers.
 // These are disabled by default unless the user opts in via environment variable.
 var builtinOAuthPresets = map[string]providerPreset{
 	"chatgpt": {
-		ClientID: "oidc",
-		AuthURL:  "https://auth.openai.com/authorize",
-		TokenURL: "https://auth.openai.com/token",
+		ClientID:  "oidc",
+		AuthURL:   "https://auth.openai.com/authorize",
+		TokenURL:  "https://auth.openai.com/token",
 		IssuerURL: "https://auth.openai.com",
-		Scopes:   []string{"openid", "email", "profile"},
-		Flow:     FlowLoopback,
+		Scopes:    []string{"openid", "email", "profile"},
+		Flow:      FlowLoopback,
 	},
 }
 

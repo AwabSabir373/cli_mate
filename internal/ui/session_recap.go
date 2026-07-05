@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	recapTimeout       = 30 * time.Second
+	recapTimeout        = 30 * time.Second
 	recapMaxAnswerChars = 1600
 )
 

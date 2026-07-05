@@ -13,12 +13,12 @@ const oauthWellKnownPath = "/.well-known/oauth-authorization-server"
 
 // ServerMetadata is a subset of RFC 8414 authorization-server metadata.
 type ServerMetadata struct {
-	Issuer                     string `json:"issuer"`
-	AuthorizationEndpoint      string `json:"authorization_endpoint"`
-	TokenEndpoint              string `json:"token_endpoint"`
-	DeviceAuthorizationEndpoint string `json:"device_authorization_endpoint"`
-	RegistrationEndpoint       string `json:"registration_endpoint"`
-	ScopesSupported            []string `json:"scopes_supported"`
+	Issuer                      string   `json:"issuer"`
+	AuthorizationEndpoint       string   `json:"authorization_endpoint"`
+	TokenEndpoint               string   `json:"token_endpoint"`
+	DeviceAuthorizationEndpoint string   `json:"device_authorization_endpoint"`
+	RegistrationEndpoint        string   `json:"registration_endpoint"`
+	ScopesSupported             []string `json:"scopes_supported"`
 }
 
 // DiscoverAuthorizationServer fetches metadata from the RFC 8414 well-known path.
@@ -71,5 +71,3 @@ func joinWellKnown(baseURL, wellKnown string) string {
 	}
 	return base + wellKnown
 }
-
-

@@ -38,14 +38,9 @@ func StylePrompt(style ResponseStyle) string {
 	return ""
 }
 
-// ValidStyles returns all valid response styles.
-func ValidStyles() []ResponseStyle {
-	return []ResponseStyle{StyleConcise, StyleExplanatory, StyleReview}
-}
-
 // IsValidStyle reports whether the given string is a valid response style.
 func IsValidStyle(s string) bool {
-	for _, valid := range ValidStyles() {
+	for _, valid := range []ResponseStyle{StyleConcise, StyleExplanatory, StyleReview} {
 		if string(valid) == s {
 			return true
 		}

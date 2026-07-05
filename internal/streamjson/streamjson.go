@@ -14,40 +14,40 @@ const SchemaVersion = 1
 type EventType string
 
 const (
-	EventRunStart    EventType = "run_start"
-	EventText        EventType = "text"
-	EventToolCall    EventType = "tool_call"
-	EventToolResult  EventType = "tool_result"
-	EventUsage       EventType = "usage"
-	EventFinal       EventType = "final"
-	EventError       EventType = "error"
-	EventRunEnd      EventType = "run_end"
-	EventPermission  EventType = "permission"
-	EventCheckpoint  EventType = "checkpoint"
-	EventWarning     EventType = "warning"
+	EventRunStart   EventType = "run_start"
+	EventText       EventType = "text"
+	EventToolCall   EventType = "tool_call"
+	EventToolResult EventType = "tool_result"
+	EventUsage      EventType = "usage"
+	EventFinal      EventType = "final"
+	EventError      EventType = "error"
+	EventRunEnd     EventType = "run_end"
+	EventPermission EventType = "permission"
+	EventCheckpoint EventType = "checkpoint"
+	EventWarning    EventType = "warning"
 )
 
 // Event is a single JSONL event in the stream.
 type Event struct {
-	SchemaVersion    int              `json:"schemaVersion"`
-	Type             EventType        `json:"type"`
-	RunID            string           `json:"runId"`
-	SessionID        string           `json:"sessionId,omitempty"`
-	Cwd              string           `json:"cwd,omitempty"`
-	Provider         string           `json:"provider,omitempty"`
-	Model            string           `json:"model,omitempty"`
-	Delta            string           `json:"delta,omitempty"`
-	Text             string           `json:"text,omitempty"`
-	ID               string           `json:"id,omitempty"`
-	Name             string           `json:"name,omitempty"`
-	Args             any              `json:"args,omitempty"`
-	Status           string           `json:"status,omitempty"`
-	Output           string           `json:"output,omitempty"`
-	Error            string           `json:"error,omitempty"`
-	Message          string           `json:"message,omitempty"`
-	PromptTokens     *int             `json:"promptTokens,omitempty"`
-	CompletionTokens *int             `json:"completionTokens,omitempty"`
-	TotalTokens      *int             `json:"totalTokens,omitempty"`
+	SchemaVersion    int               `json:"schemaVersion"`
+	Type             EventType         `json:"type"`
+	RunID            string            `json:"runId"`
+	SessionID        string            `json:"sessionId,omitempty"`
+	Cwd              string            `json:"cwd,omitempty"`
+	Provider         string            `json:"provider,omitempty"`
+	Model            string            `json:"model,omitempty"`
+	Delta            string            `json:"delta,omitempty"`
+	Text             string            `json:"text,omitempty"`
+	ID               string            `json:"id,omitempty"`
+	Name             string            `json:"name,omitempty"`
+	Args             any               `json:"args,omitempty"`
+	Status           string            `json:"status,omitempty"`
+	Output           string            `json:"output,omitempty"`
+	Error            string            `json:"error,omitempty"`
+	Message          string            `json:"message,omitempty"`
+	PromptTokens     *int              `json:"promptTokens,omitempty"`
+	CompletionTokens *int              `json:"completionTokens,omitempty"`
+	TotalTokens      *int              `json:"totalTokens,omitempty"`
 	Meta             map[string]string `json:"meta,omitempty"`
 }
 
@@ -132,10 +132,10 @@ func (e *Encoder) ToolCall(runID, id, name string, args any) error {
 // ToolResult emits a tool_result event.
 func (e *Encoder) ToolResult(runID, id, name, output string, truncated bool) error {
 	return e.Encode(Event{
-		Type:  EventToolResult,
-		RunID: runID,
-		ID:    id,
-		Name:  name,
+		Type:   EventToolResult,
+		RunID:  runID,
+		ID:     id,
+		Name:   name,
 		Output: output,
 	})
 }

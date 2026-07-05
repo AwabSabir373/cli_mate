@@ -47,8 +47,8 @@ func (t *EnterPlanModeTool) Definition() Definition {
 		Name:        t.Name(),
 		Description: "Enter plan mode to plan changes before executing them. In plan mode, you can only read files and analyze the codebase.",
 		Schema: map[string]any{
-			"type":       "object",
-			"properties": map[string]any{},
+			"type":        "object",
+			"properties":  map[string]any{},
 			"description": "Enter plan mode. You will be in read-only mode until you call exit_plan_mode.",
 		},
 	}

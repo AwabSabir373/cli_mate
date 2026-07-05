@@ -112,7 +112,7 @@ func (a *App) runCommand(raw string) {
 		if a.mcpManager != nil {
 			mcpDir := filepath.Join(".cli_mate", "mcp")
 			mcpFile := filepath.Join(mcpDir, "mcp.yml")
-			
+
 			// Load or create default mcp.yml
 			cfg, err := config.LoadCustomMCPConfig(mcpFile)
 			if err != nil {

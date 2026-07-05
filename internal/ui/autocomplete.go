@@ -37,23 +37,23 @@ type autocompleteSuggestion struct {
 
 // autocompleteState manages the full autocomplete system.
 type autocompleteState struct {
-	mu            sync.RWMutex
-	active        bool
-	category      suggestionCategory
-	suggestions   []autocompleteSuggestion
-	cursor        int
-	query         string
-	fileIndex     *fileSuggestionIndex
-	lastActive    time.Time
+	mu          sync.RWMutex
+	active      bool
+	category    suggestionCategory
+	suggestions []autocompleteSuggestion
+	cursor      int
+	query       string
+	fileIndex   *fileSuggestionIndex
+	lastActive  time.Time
 }
 
 // fileSuggestionIndex caches workspace file listings with a TTL.
 type fileSuggestionIndex struct {
-	files     []string
-	builtAt   time.Time
-	ttl       time.Duration
-	cwd       string
-	mu        sync.RWMutex
+	files   []string
+	builtAt time.Time
+	ttl     time.Duration
+	cwd     string
+	mu      sync.RWMutex
 }
 
 // newFileSuggestionIndex creates a new file suggestion index.
@@ -326,7 +326,7 @@ func (ac *autocompleteState) computeSuggestions(input string, userCmds []usercom
 func (ac *autocompleteState) commandSuggestions(prefix string, userCmds []usercommands.Command) []autocompleteSuggestion {
 	allCommands := []struct {
 		value, label, desc string
-		cat                 suggestionCategory
+		cat                suggestionCategory
 	}{
 		{"/help", "/help", "show available commands", catCommand},
 		{"/open ", "/open", "preview a file", catCommand},

@@ -9,20 +9,20 @@ import (
 type WizardStep string
 
 const (
-	WizardStepProvider  WizardStep = "provider"
-	WizardStepAPIKey    WizardStep = "api_key"
-	WizardStepModel     WizardStep = "model"
-	WizardStepComplete  WizardStep = "complete"
+	WizardStepProvider WizardStep = "provider"
+	WizardStepAPIKey   WizardStep = "api_key"
+	WizardStepModel    WizardStep = "model"
+	WizardStepComplete WizardStep = "complete"
 )
 
 // ProviderWizard guides users through provider setup.
 type ProviderWizard struct {
-	visible    bool
-	step       WizardStep
-	provider   string
-	apiKey     string
-	model      string
-	error      string
+	visible  bool
+	step     WizardStep
+	provider string
+	apiKey   string
+	model    string
+	error    string
 }
 
 // NewProviderWizard creates a new provider wizard.

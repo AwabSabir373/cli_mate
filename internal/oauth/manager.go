@@ -32,29 +32,29 @@ type Status struct {
 
 // Manager ties the token store, provider registry, and HTTP client together.
 type Manager struct {
-	store       *Store
-	registry    *Registry
-	client      *http.Client
-	env         map[string]string
-	now         func() time.Time
-	buffer      time.Duration
-	out         io.Writer
-	openBrowser func(authURL string) error
-	refreshMu   sync.Mutex
+	store        *Store
+	registry     *Registry
+	client       *http.Client
+	env          map[string]string
+	now          func() time.Time
+	buffer       time.Duration
+	out          io.Writer
+	openBrowser  func(authURL string) error
+	refreshMu    sync.Mutex
 	refreshLocks map[string]*sync.Mutex
 }
 
 // ManagerOptions configures a Manager.
 type ManagerOptions struct {
-	Store        *Store
-	Registry     *Registry
-	HTTPClient   *http.Client
-	Env          map[string]string
-	AllowPresets bool
-	Now          func() time.Time
+	Store         *Store
+	Registry      *Registry
+	HTTPClient    *http.Client
+	Env           map[string]string
+	AllowPresets  bool
+	Now           func() time.Time
 	RefreshBuffer time.Duration
-	Out          io.Writer
-	OpenBrowser  func(authURL string) error
+	Out           io.Writer
+	OpenBrowser   func(authURL string) error
 }
 
 // NewManager builds a Manager, filling defaults.
@@ -94,9 +94,9 @@ func NewManager(opts ManagerOptions) (*Manager, error) {
 
 // LoginOptions configures a single provider login.
 type LoginOptions struct {
-	Provider   string
-	Device     bool
-	Timeout    time.Duration
+	Provider string
+	Device   bool
+	Timeout  time.Duration
 }
 
 // Login runs the provider login, stores the token, and returns a status.

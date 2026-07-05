@@ -21,24 +21,24 @@ type askUserQuestion struct {
 
 // askUserState manages the interactive ask-user prompt state.
 type askUserState struct {
-	questions   []askUserQuestion
-	cursor      int      // Which question we're on
-	answerCursor int     // Which option is selected within the question
-	answers     []string // Committed answers (option labels or typed text)
-	typing      bool     // Whether user is typing a custom answer
-	typedText   string   // Custom typed answer text
-	active      bool
-	finished    bool
+	questions    []askUserQuestion
+	cursor       int      // Which question we're on
+	answerCursor int      // Which option is selected within the question
+	answers      []string // Committed answers (option labels or typed text)
+	typing       bool     // Whether user is typing a custom answer
+	typedText    string   // Custom typed answer text
+	active       bool
+	finished     bool
 }
 
 // newAskUserState creates a new ask-user prompt state.
 func newAskUserState(questions []askUserQuestion) *askUserState {
 	state := &askUserState{
-		questions:   questions,
-		answers:     make([]string, len(questions)),
+		questions:    questions,
+		answers:      make([]string, len(questions)),
 		answerCursor: 0,
-		cursor:      0,
-		active:      true,
+		cursor:       0,
+		active:       true,
 	}
 
 	// Start with custom input for multi-select questions

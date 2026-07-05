@@ -10,13 +10,13 @@ const maxSchedulerLoadErrors = 5
 
 // RefreshScheduler proactively refreshes OAuth tokens shortly before expiry.
 type RefreshScheduler struct {
-	manager  *Manager
-	key      string
-	cfg      Config
-	mu       sync.Mutex
-	stop     chan struct{}
-	done     chan struct{}
-	running  bool
+	manager *Manager
+	key     string
+	cfg     Config
+	mu      sync.Mutex
+	stop    chan struct{}
+	done    chan struct{}
+	running bool
 }
 
 // NewRefreshScheduler creates a new refresh scheduler for a token key.
@@ -116,5 +116,3 @@ func delayUntilRefresh(token Token, buffer time.Duration) time.Duration {
 	jitter := time.Duration(float64(delay) * 0.1 * (1 - 2*float64(token.ExpiresAt%100)/100))
 	return delay + jitter
 }
-
-

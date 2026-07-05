@@ -27,7 +27,7 @@ func (t *ReadSubtreeTool) Definition() Definition {
 		Name:        t.Name(),
 		Description: "Read a directory subtree and return a structured view of subdirectories, file names, and parsed function/variable names from source files. Use this to understand the structure of a package or directory at once instead of reading individual files.",
 		Schema: map[string]any{
-			"type": "object",
+			"type":     "object",
 			"required": []string{"path"},
 			"properties": map[string]any{
 				"path": map[string]any{

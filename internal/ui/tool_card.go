@@ -32,12 +32,12 @@ func (f toolBodyRendererFunc) renderToolBody(req toolBodyRequest) cardBody {
 
 // toolBodyRequest contains the data needed to render a tool result.
 type toolBodyRequest struct {
-	name       string
-	arg        string
-	detail     string // The full tool result text
-	hint       string
-	path       string
-	argsJSON   map[string]interface{} // Parsed JSON arguments
+	name     string
+	arg      string
+	detail   string // The full tool result text
+	hint     string
+	path     string
+	argsJSON map[string]interface{} // Parsed JSON arguments
 }
 
 // toolBodyRegistry maps tool names to their specific renderers.
@@ -404,8 +404,8 @@ func displayPath(path string) string {
 // wordDiff computes a simple word-level diff between two strings.
 // Returns the old and new strings with change markers for rendering.
 type wordDiffResult struct {
-	OldWords  []wordSpan
-	NewWords  []wordSpan
+	OldWords []wordSpan
+	NewWords []wordSpan
 }
 
 type wordSpan struct {

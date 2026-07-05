@@ -213,10 +213,10 @@ type persistedConfig struct {
 }
 
 type persistedProfile struct {
-	Provider          string  `yaml:"provider"`
-	Model             string  `yaml:"model"`
-	APIKey            string  `yaml:"apiKey,omitempty"`
-	BaseURL           string  `yaml:"baseURL,omitempty"`
+	Provider          string   `yaml:"provider"`
+	Model             string   `yaml:"model"`
+	APIKey            string   `yaml:"apiKey,omitempty"`
+	BaseURL           string   `yaml:"baseURL,omitempty"`
 	MaxTokens         int      `yaml:"maxTokens"`
 	ReserveTokens     int      `yaml:"reserveTokens"`
 	Temperature       float64  `yaml:"temperature"`
