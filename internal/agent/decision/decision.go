@@ -15,10 +15,11 @@ import (
 type Engine struct {
 	Router       toolrouter.Router
 	ApprovalRisk agentloop.RiskLevel
+	Hypotheses   *HypothesisEngine
 }
 
 func New(router toolrouter.Router) *Engine {
-	return &Engine{Router: router, ApprovalRisk: agentloop.RiskDependencyChange}
+	return &Engine{Router: router, ApprovalRisk: agentloop.RiskDependencyChange, Hypotheses: NewHypothesisEngine()}
 }
 
 func (e *Engine) Decide(ctx context.Context, state *agentloop.RunState, bundle agentloop.ContextBundle) (agentloop.ActionDecision, error) {
@@ -29,6 +30,9 @@ func (e *Engine) Decide(ctx context.Context, state *agentloop.RunState, bundle a
 		AllowParallel: true,
 		MaxRisk:       intent.MaxRisk,
 	}
+
+	// Stage 1: Generate competing hypotheses before selecting tools.
+	activeHypotheses := e.Hypotheses.Generate(task, bundle)
 
 	var candidates []agentloop.CandidateAction
 	var err error
@@ -42,29 +46,95 @@ func (e *Engine) Decide(ctx context.Context, state *agentloop.RunState, bundle a
 	knowEnough := knowsEnough(task, bundle)
 	needContext := !knowEnough && canGatherContext(candidates)
 	canParallel := canParallelize(candidates)
-	scored, rejected := evaluateCandidates(state, bundle, candidates, knowEnough)
+
+	// Stage 2: Evaluate candidates with hypothesis-derived information gain.
+	scored, rejected := evaluateCandidatesWithHypotheses(state, bundle, candidates, activeHypotheses, knowEnough)
 	selected := first(scored)
 	cheapest := cheapestSafe(scored)
-	reviewerNotes := reviewSelection(task, knowEnough, selected, cheapest, rejected)
+	recovery := recoveryActions(scored, rejected, selected)
+
+	// Stage 3: Mutation rule — reject mutation while multiple high-probability hypotheses remain unresolved.
+	remainingUncertainty := RemainingUncertainty(activeHypotheses)
+	primaryHyp := PrimaryHypothesis(activeHypotheses)
+	infoGain := 0.0
+	if selected.Tool.Name != "" {
+		infoGain = EstimateInformationGainForTool(selected, activeHypotheses)
+	}
+
+	// Enforce mutation rule when uncertainty is high (unless user explicitly requires mutation)
+	if selected.Tool.Mutates && !intent.RequiresMutation && remainingUncertainty > 0.35 && primaryHyp != nil && primaryHyp.Probability < 0.7 {
+		rejected = append(rejected, selected)
+		// Try to find a read-only inspection tool from remaining scored candidates
+		foundNonMutating := false
+		for _, c := range scored[1:] {
+			if !c.Tool.Mutates && c.Tool.Risk <= agentloop.RiskReadOnly {
+				selected = c
+				foundNonMutating = true
+				break
+			}
+		}
+		// Fallback: prefer cheapest safe tool
+		if !foundNonMutating && cheapest.Tool.Name != "" {
+			selected = cheapest
+			foundNonMutating = true
+		}
+		// Last resort: search rejected or recovery for any read-only action
+		if !foundNonMutating {
+			for _, c := range rejected {
+				if !c.Tool.Mutates && c.Tool.Risk <= agentloop.RiskReadOnly {
+					selected = c
+					foundNonMutating = true
+					break
+				}
+			}
+		}
+		if !foundNonMutating && len(recovery) > 0 {
+			for _, c := range recovery {
+				if !c.Tool.Mutates && c.Tool.Risk <= agentloop.RiskReadOnly {
+					selected = c
+					break
+				}
+			}
+		}
+	}
+
+	reviewerNotes := selfCritic(task, knowEnough, selected, cheapest, rejected, recovery)
 	approvalRisk := e.ApprovalRisk
 	if approvalRisk == 0 {
 		approvalRisk = agentloop.RiskDependencyChange
 	}
 	requiresApproval := selected.Tool.Risk >= approvalRisk || taskRisk(task) >= approvalRisk
 
+	// Stage 4: Build hypothesis-informed decision.
+	var rejectedHyps []agentloop.Hypothesis
+	for _, h := range activeHypotheses {
+		if h.State == agentloop.HypothesisRejected {
+			rejectedHyps = append(rejectedHyps, h)
+		}
+	}
+	confidenceDelta := infoGain * (1 - remainingUncertainty)
+
 	return agentloop.ActionDecision{
-		KnowEnough:         knowEnough,
-		NeedMoreContext:    needContext,
-		CandidateActions:   scored,
-		SelectedAction:     selected,
-		CanParallelize:     canParallel,
-		CheapestSafeAction: cheapest,
-		VerificationPlan:   verificationPlan(task, intent),
-		RequiresApproval:   requiresApproval,
-		Reason:             reason(knowEnough, needContext, selected, cheapest, canParallel, requiresApproval, reviewerNotes),
-		InternalConfidence: selected.Evaluation.Confidence,
-		ReviewerNotes:      reviewerNotes,
-		RejectedActions:    rejected,
+		KnowEnough:              knowEnough,
+		NeedMoreContext:         needContext,
+		CandidateActions:        scored,
+		SelectedAction:          selected,
+		CanParallelize:          canParallel,
+		CheapestSafeAction:      cheapest,
+		RecoveryActions:         recovery,
+		ActiveHypotheses:        activeHypotheses,
+		PrimaryHypothesis:       primaryHyp,
+		RejectedHypotheses:      rejectedHyps,
+		InformationGainEstimate: infoGain,
+		RemainingUncertainty:    remainingUncertainty,
+		VerificationReason:      verificationReason(selected, activeHypotheses),
+		ConfidenceDeltaPrediction: confidenceDelta,
+		VerificationPlan:        verificationPlan(task, intent),
+		RequiresApproval:        requiresApproval,
+		Reason:                  reason(knowEnough, needContext, selected, cheapest, recovery, canParallel, requiresApproval, reviewerNotes),
+		InternalConfidence:      selected.Evaluation.Confidence,
+		ReviewerNotes:           reviewerNotes,
+		RejectedActions:         rejected,
 	}, nil
 }
 
@@ -164,15 +234,68 @@ func first(candidates []agentloop.CandidateAction) agentloop.CandidateAction {
 	return candidates[0]
 }
 
-func evaluateCandidates(state *agentloop.RunState, bundle agentloop.ContextBundle, candidates []agentloop.CandidateAction, knowEnough bool) ([]agentloop.CandidateAction, []agentloop.CandidateAction) {
+// recoveryActions selects 1-2 fallback actions for the recovery plan.
+// It picks safe, reversible alternatives that scored well but weren't selected.
+func recoveryActions(scored, rejected []agentloop.CandidateAction, selected agentloop.CandidateAction) []agentloop.CandidateAction {
+	var recovery []agentloop.CandidateAction
+	seen := map[string]bool{}
+	if selected.Tool.Name != "" {
+		seen[selected.Tool.Name] = true
+	}
+
+	// First pass: pick from scored candidates (excluding selected)
+	for _, candidate := range scored {
+		if len(recovery) >= 2 {
+			break
+		}
+		if seen[candidate.Tool.Name] {
+			continue
+		}
+		if candidate.Tool.Mutates && candidate.Tool.Risk > agentloop.RiskLocalEdit {
+			continue
+		}
+		seen[candidate.Tool.Name] = true
+		recovery = append(recovery, candidate)
+	}
+
+	// Second pass: pick safe read-only actions from rejected as last resort
+	if len(recovery) == 0 {
+		for _, candidate := range rejected {
+			if len(recovery) >= 1 {
+				break
+			}
+			if seen[candidate.Tool.Name] {
+				continue
+			}
+			if !candidate.Tool.Mutates && candidate.Tool.Risk <= agentloop.RiskReadOnly {
+				seen[candidate.Tool.Name] = true
+				recovery = append(recovery, candidate)
+			}
+		}
+	}
+
+	return recovery
+}
+
+func evaluateCandidatesWithHypotheses(state *agentloop.RunState, bundle agentloop.ContextBundle, candidates []agentloop.CandidateAction, hypotheses []agentloop.Hypothesis, knowEnough bool) ([]agentloop.CandidateAction, []agentloop.CandidateAction) {
 	if len(candidates) == 0 {
 		return nil, nil
 	}
-	stats := toolStats(state.Events)
+	// Nil guard for safe nil-state access.
+	var events []agentloop.Event
+	if state != nil {
+		events = state.Events
+	}
+	stats := toolStats(events)
 	scored := make([]agentloop.CandidateAction, 0, len(candidates))
 	rejected := make([]agentloop.CandidateAction, 0)
 	for _, candidate := range candidates {
 		evaluation := evaluateCandidate(state, bundle, stats, candidate, knowEnough)
+		// Augment with hypothesis-driven information gain
+		if len(hypotheses) > 0 {
+			infoGain := EstimateInformationGainForTool(candidate, hypotheses)
+			evaluation.InformationGain = infoGain
+		}
 		candidate.Evaluation = evaluation
 		candidate.Score = compositeScore(candidate.Score, evaluation)
 		candidate.Reason = enrichReason(candidate.Reason, evaluation)
@@ -232,6 +355,13 @@ func evaluateCandidate(state *agentloop.RunState, bundle agentloop.ContextBundle
 	latencyCost := clamp(float64(latency)/float64(10*time.Second), 0, 1)
 	executionCost := clamp((tokenCost+latencyCost+riskCost)/3, 0, 1)
 	verificationAbility := verificationAbility(candidate)
+
+	// Reversibility bonus: reversible tools are safer and should be preferred
+	reversibilityBonus := 0.0
+	if candidate.Tool.Reversible {
+		reversibilityBonus = 0.12
+	}
+
 	expectedValue := clamp((candidate.Score/10)+verificationAbility+(contextConfidence*0.4)-(failureProbability*0.5)-(riskCost*0.35), 0, 1)
 	confidence := clamp(contextConfidence+(expectedValue*0.25)-(failureProbability*0.25)-(riskCost*0.15), 0, 1)
 
@@ -261,6 +391,7 @@ func evaluateCandidate(state *agentloop.RunState, bundle agentloop.ContextBundle
 		VerificationAbility: verificationAbility,
 		Rejected:            rejected,
 		Review:              review,
+		ReversibilityBonus:  reversibilityBonus,
 	}
 }
 
@@ -269,6 +400,8 @@ func compositeScore(routerScore float64, evaluation agentloop.ActionEvaluation) 
 	score += evaluation.ExpectedValue * 4
 	score += evaluation.Confidence * 2
 	score += evaluation.VerificationAbility
+	score += evaluation.InformationGain * 5  // Highest priority: information gain
+	score += evaluation.ReversibilityBonus * 3
 	score -= evaluation.Risk * 1.5
 	score -= evaluation.TokenCost
 	score -= evaluation.LatencyCost
@@ -288,6 +421,12 @@ func enrichReason(reason string, evaluation agentloop.ActionEvaluation) string {
 		fmt.Sprintf("failure=%.2f", evaluation.FailureProbability),
 		fmt.Sprintf("verify=%.2f", evaluation.VerificationAbility),
 	)
+	if evaluation.InformationGain > 0 {
+		parts = append(parts, fmt.Sprintf("info=%.2f", evaluation.InformationGain))
+	}
+	if evaluation.ReversibilityBonus > 0 {
+		parts = append(parts, fmt.Sprintf("reversible=%.2f", evaluation.ReversibilityBonus))
+	}
 	if evaluation.Review != "" {
 		parts = append(parts, evaluation.Review)
 	}
@@ -374,27 +513,83 @@ func toolStats(events []agentloop.Event) map[string]toolHistory {
 	return stats
 }
 
-func reviewSelection(task *agentloop.TaskNode, knowEnough bool, selected, cheapest agentloop.CandidateAction, rejected []agentloop.CandidateAction) []string {
+// selfCritic implements the DIE 7-question structured self-critic.
+// Each question produces a note if the condition is detected.
+func selfCritic(task *agentloop.TaskNode, knowEnough bool, selected, cheapest agentloop.CandidateAction, rejected []agentloop.CandidateAction, recovery []agentloop.CandidateAction) []string {
 	var notes []string
+
 	if selected.Tool.Name == "" {
-		return []string{"no acceptable tool candidate; ask the model to reason from context or gather safer evidence"}
+		return []string{"self-critic: no acceptable tool candidate; ask the model to reason from context or gather safer evidence"}
 	}
+
+	// Q1: Is this premature?
 	if selected.Tool.Mutates && !knowEnough {
-		notes = append(notes, "self-critic: mutation needs more evidence first")
+		notes = append(notes, "self-critic Q1: action may be premature without sufficient evidence")
 	}
+
+	// Q2: Am I guessing?
+	if selected.Evaluation.Confidence < 0.3 && selected.Tool.Risk > agentloop.RiskReadOnly {
+		notes = append(notes, "self-critic Q2: scoring relies on inference, not confirmed evidence (confidence < 0.3)")
+	}
+
+	// Q3: Am I skipping inspection?
+	// Build a combined candidate set from rejected, selected, and recovery to check all alternatives.
+	combined := make([]agentloop.CandidateAction, 0, len(rejected)+len(recovery)+1)
+	combined = append(combined, rejected...)
+	combined = append(combined, recovery...)
+	if selected.Tool.Name != "" {
+		combined = append(combined, selected)
+	}
+	if selected.Tool.Mutates && canGatherContext(combined) {
+		notes = append(notes, "self-critic Q3: cheaper inspection alternatives available before mutation")
+	}
+
+	// Q4: Is there a cheaper action?
 	if cheapest.Tool.Name != "" && cheapest.Tool.Name != selected.Tool.Name && cheapest.Score >= selected.Score-0.75 {
-		notes = append(notes, "self-critic: cheaper safe alternative is close in value: "+cheapest.Tool.Name)
+		notes = append(notes, "self-critic Q4: cheaper safe alternative is close in value: "+cheapest.Tool.Name)
 	}
-	if selected.Evaluation.VerificationAbility < 0.2 && task != nil && len(task.Verification.Commands) > 0 {
-		notes = append(notes, "self-critic: selected action has weak verification leverage for a task with required checks")
+
+	// Q5: Is there a safer action?
+	if len(recovery) > 0 && recovery[0].Tool.Name != selected.Tool.Name && recovery[0].Tool.Risk < selected.Tool.Risk && recovery[0].Score >= selected.Score-1.0 {
+		notes = append(notes, "self-critic Q5: safer alternative with similar value available: "+recovery[0].Tool.Name)
 	}
-	if len(rejected) > 0 {
-		notes = append(notes, fmt.Sprintf("self-critic rejected %d weaker candidate(s)", len(rejected)))
+
+	// Q6: Would an expert engineer do this?
+	if selected.Tool.Mutates && (task == nil || task.Confidence < 0.4) {
+		notes = append(notes, "self-critic Q6: expert would confirm key assumptions before mutating (task confidence < 0.4)")
 	}
+
+	// Q7: Would this scale?
+	if selected.Tool.Risk >= agentloop.RiskNetwork && !selected.Tool.Reversible {
+		notes = append(notes, "self-critic Q7: narrow, contextual approach preferred over broad irreversible action")
+	}
+
 	if len(notes) == 0 {
-		notes = append(notes, "self-critic accepted the selected action as the simplest safe step")
+		notes = append(notes, "self-critic: all 7 checks passed — the selected action is the simplest safe step")
 	}
 	return notes
+}
+
+func verificationReason(selected agentloop.CandidateAction, hypotheses []agentloop.Hypothesis) string {
+	if len(hypotheses) == 0 {
+		return "no hypotheses to verify"
+	}
+	var b strings.Builder
+	hypCount := 0
+	for _, h := range hypotheses {
+		if h.State != agentloop.HypothesisConfirmed && h.State != agentloop.HypothesisRejected {
+			hypCount++
+		}
+	}
+	fmt.Fprintf(&b, "%d/%d unresolved hypotheses remain. ", hypCount, len(hypotheses))
+	gain := EstimateInformationGainForTool(selected, hypotheses)
+	fmt.Fprintf(&b, "Selected action expected info gain: %.2f. ", gain)
+	if selected.Tool.Mutates && hypCount > 1 {
+		b.WriteString("Mutation with active unresolved hypotheses — verify before finalizing.")
+	} else if !selected.Tool.Mutates {
+		b.WriteString("Inspection action that helps resolve hypotheses.")
+	}
+	return b.String()
 }
 
 func taskRisk(task *agentloop.TaskNode) agentloop.RiskLevel {
@@ -411,7 +606,7 @@ func verificationPlan(task *agentloop.TaskNode, intent agentloop.ToolIntent) age
 	return intent.Verification
 }
 
-func reason(knowEnough, needContext bool, selected, cheapest agentloop.CandidateAction, parallel, approval bool, reviewerNotes []string) string {
+func reason(knowEnough, needContext bool, selected, cheapest agentloop.CandidateAction, recovery []agentloop.CandidateAction, parallel, approval bool, reviewerNotes []string) string {
 	parts := []string{}
 	if knowEnough {
 		parts = append(parts, "known context is sufficient for the active task")
@@ -427,6 +622,13 @@ func reason(knowEnough, needContext bool, selected, cheapest agentloop.Candidate
 	}
 	if cheapest.Tool.Name != "" && cheapest.Tool.Name != selected.Tool.Name {
 		parts = append(parts, "cheapest safe alternative is "+cheapest.Tool.Name)
+	}
+	if len(recovery) > 0 {
+		names := make([]string, len(recovery))
+		for i, r := range recovery {
+			names[i] = r.Tool.Name
+		}
+		parts = append(parts, "recovery plan if selected action fails: "+strings.Join(names, ", "))
 	}
 	if parallel {
 		parts = append(parts, "independent readonly tools can run in parallel")

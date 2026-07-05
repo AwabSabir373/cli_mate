@@ -24,6 +24,53 @@ type CustomMCPServer struct {
 	Env     map[string]string `yaml:"env"`
 }
 
+// BuiltinMCPConfig returns cli_mate's own MCP server configuration.
+func BuiltinMCPConfig() (MCPConfig, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return MCPConfig{}, err
+	}
+	return MCPConfig{
+		Name:    "cli_mcp",
+		Command: exe,
+		Args:    []string{"mcp-server"},
+		Env:     map[string]string{},
+	}, nil
+}
+
+// DefaultCustomMCPConfig returns the project-local MCP file cli_mate creates by default.
+func DefaultCustomMCPConfig() (*CustomMCPFile, error) {
+	builtin, err := BuiltinMCPConfig()
+	if err != nil {
+		return nil, err
+	}
+	return &CustomMCPFile{
+		Name:    "CLI Mate Built-in MCP",
+		Version: "0.0.1",
+		Schema:  "v1",
+		MCPServers: []CustomMCPServer{
+			{
+				Name:    builtin.Name,
+				Command: builtin.Command,
+				Args:    builtin.Args,
+				Env:     builtin.Env,
+			},
+		},
+	}, nil
+}
+
+// IsLegacyGeneratedDefault reports whether this is the old hard-coded sample config.
+func (c *CustomMCPFile) IsLegacyGeneratedDefault() bool {
+	if c == nil || c.Name != "Serena + Context7" || len(c.MCPServers) != 2 {
+		return false
+	}
+	names := map[string]bool{}
+	for _, server := range c.MCPServers {
+		names[server.Name] = true
+	}
+	return names["serena-frontend"] && names["context7"]
+}
+
 // LoadCustomMCPConfig reads and parses the custom MCP configuration from the given path.
 func LoadCustomMCPConfig(path string) (*CustomMCPFile, error) {
 	data, err := os.ReadFile(path)

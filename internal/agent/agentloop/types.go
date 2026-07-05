@@ -110,6 +110,31 @@ const (
 	EventCompleted           EventType = "completed"
 )
 
+type HypothesisState string
+
+const (
+	HypothesisUnknown      HypothesisState = "unknown"
+	HypothesisConfirmed    HypothesisState = "confirmed"
+	HypothesisRejected     HypothesisState = "rejected"
+	HypothesisWeakened     HypothesisState = "weakened"
+	HypothesisStrengthened HypothesisState = "strengthened"
+)
+
+type Hypothesis struct {
+	ID                   string
+	Description          string
+	SupportingEvidence   []string
+	MissingEvidence      []string
+	ContradictingEvidence []string
+	Probability          float64
+	VerificationCost     float64
+	Risk                 RiskLevel
+	InformationGain      float64
+	VerificationMethod   string
+	Confidence           float64
+	State                HypothesisState
+}
+
 type EvidenceRef struct {
 	Kind    string
 	Source  string
@@ -160,21 +185,24 @@ type DiffCheck struct {
 }
 
 type TaskNode struct {
-	ID             string
-	ParentID       string
-	Goal           string
-	Status         TaskStatus
-	Priority       int
-	Dependencies   []string
-	Risk           RiskLevel
-	Confidence     float64
-	Evidence       []EvidenceRef
-	CandidateTools []string
-	Verification   VerificationSpec
-	Attempts       int
-	MaxAttempts    int
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID               string
+	ParentID         string
+	Goal             string
+	Status           TaskStatus
+	Priority         int
+	Dependencies     []string
+	Risk             RiskLevel
+	Confidence       float64
+	Evidence         []EvidenceRef
+	CandidateTools   []string
+	Verification     VerificationSpec
+	SuccessCriteria  string
+	FailureCriteria  string
+	HypothesisIDs    []string
+	Attempts         int
+	MaxAttempts      int
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type TaskGraph struct {
@@ -280,6 +308,7 @@ type ToolDescriptor struct {
 	Cost             ToolCost
 	SupportsParallel bool
 	Mutates          bool
+	Reversible       bool
 	Definition       tools.Definition
 }
 
@@ -312,6 +341,8 @@ type ActionEvaluation struct {
 	ExecutionCost       float64
 	FailureProbability  float64
 	VerificationAbility float64
+	ReversibilityBonus  float64
+	InformationGain     float64
 	Rejected            bool
 	Review              string
 }
@@ -376,18 +407,26 @@ type RetryPolicy struct {
 }
 
 type ActionDecision struct {
-	KnowEnough         bool
-	NeedMoreContext    bool
-	CandidateActions   []CandidateAction
-	SelectedAction     CandidateAction
-	CanParallelize     bool
-	CheapestSafeAction CandidateAction
-	VerificationPlan   VerificationSpec
-	RequiresApproval   bool
-	Reason             string
-	InternalConfidence float64
-	ReviewerNotes      []string
-	RejectedActions    []CandidateAction
+	KnowEnough              bool
+	NeedMoreContext         bool
+	CandidateActions        []CandidateAction
+	SelectedAction          CandidateAction
+	CanParallelize          bool
+	CheapestSafeAction      CandidateAction
+	RecoveryActions         []CandidateAction
+	ActiveHypotheses        []Hypothesis
+	PrimaryHypothesis       *Hypothesis
+	RejectedHypotheses      []Hypothesis
+	InformationGainEstimate float64
+	RemainingUncertainty    float64
+	VerificationReason      string
+	ConfidenceDeltaPrediction float64
+	VerificationPlan        VerificationSpec
+	RequiresApproval        bool
+	Reason                  string
+	InternalConfidence      float64
+	ReviewerNotes           []string
+	RejectedActions         []CandidateAction
 }
 
 type RunState struct {

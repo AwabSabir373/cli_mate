@@ -23,6 +23,7 @@ import (
 const defaultMaxToolIterations = 32
 
 var toolBlockPattern = regexp.MustCompile("(?s)```(?:cli_mate-tool|goai-tool|tool|json)\\s*(.*?)\\s*```")
+var openToolBlockPattern = regexp.MustCompile("(?s)```(?:cli_mate-tool|goai-tool|tool|json)\\s*(.*)$")
 
 type CodingRunner struct {
 	Provider      providers.Provider
@@ -49,6 +50,7 @@ type RunOptions struct {
 	DisableTools           bool
 	CompactionPreserveLast int
 	OnUsage                func(providers.Usage)
+	OnActivity             func()
 	SelfCorrector          *SelfCorrector
 	Hooks                  *HookDispatcher
 	Style                  ResponseStyle
@@ -219,7 +221,8 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 			}
 
 			answer, nativeToolCalls, err = (StreamHandler{
-				OnToken: opts.OnToken,
+				OnToken:    opts.OnToken,
+				OnActivity: opts.OnActivity,
 			}).Consume(ctx, events)
 
 			if err != nil {
@@ -877,6 +880,8 @@ func parseToolCall(text string) (tools.Call, bool, error) {
 	payload := strings.TrimSpace(text)
 	if match := toolBlockPattern.FindStringSubmatch(text); len(match) == 2 {
 		payload = strings.TrimSpace(match[1])
+	} else if match := openToolBlockPattern.FindStringSubmatch(text); len(match) == 2 {
+		payload = strings.TrimSpace(match[1])
 	} else if !strings.HasPrefix(payload, "{") {
 		return tools.Call{}, false, nil
 	}
@@ -891,7 +896,7 @@ func parseToolCall(text string) (tools.Call, bool, error) {
 	if first, ok := recoverableToolArguments(payload); ok {
 		payload = first
 	} else {
-		return tools.Call{}, true, fmt.Errorf("malformed JSON payload")
+		return tools.Call{}, true, fmt.Errorf("malformed or incomplete JSON payload")
 	}
 
 	if err := json.Unmarshal([]byte(payload), &raw); err != nil {

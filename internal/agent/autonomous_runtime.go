@@ -22,21 +22,23 @@ import (
 )
 
 type autonomousRuntime struct {
-	state           *agentloop.RunState
-	planner         planner.Planner
-	contextEngine   *contextengine.Engine
-	router          *toolrouter.ToolRouter
-	decider         *decision.Engine
-	memory          memory.Store
-	reflector       *reflection.Engine
-	verifier        *verification.Engine
-	workspaceRoot   string
-	onStep          func(Step)
-	readFiles       map[string]bool
-	lastMemoryIndex int
-	lastDecision    agentloop.ActionDecision
-	toolSignatures  map[string]int
-	finalBlocks     int
+	state            *agentloop.RunState
+	planner          planner.Planner
+	contextEngine    *contextengine.Engine
+	router           *toolrouter.ToolRouter
+	decider          *decision.Engine
+	memory           memory.Store
+	reflector        *reflection.Engine
+	verifier         *verification.Engine
+	workspaceRoot    string
+	onStep           func(Step)
+	readFiles        map[string]bool
+	lastMemoryIndex  int
+	lastDecision     agentloop.ActionDecision
+	hypotheses       []agentloop.Hypothesis
+	toolSignatures   map[string]int
+	requiresMutation bool
+	finalBlocks      int
 }
 
 func (r *CodingRunner) newAutonomousRuntime(opts RunOptions, maxIterations int) *autonomousRuntime {
@@ -61,18 +63,19 @@ func (r *CodingRunner) newAutonomousRuntime(opts RunOptions, maxIterations int) 
 	ctxEngine := contextengine.New(budget)
 	ctxEngine.Memory = store
 	return &autonomousRuntime{
-		state:          agentloop.NewRunState(agentloop.NewID("run"), opts.Prompt, maxIterations),
-		planner:        planner.NewHeuristicPlanner(),
-		contextEngine:  ctxEngine,
-		router:         router,
-		decider:        decision.New(router),
-		memory:         store,
-		reflector:      reflection.New(),
-		verifier:       verification.New(r.WorkspaceRoot),
-		workspaceRoot:  r.WorkspaceRoot,
-		onStep:         opts.OnStep,
-		readFiles:      map[string]bool{},
-		toolSignatures: map[string]int{},
+		state:            agentloop.NewRunState(agentloop.NewID("run"), opts.Prompt, maxIterations),
+		planner:          planner.NewHeuristicPlanner(),
+		contextEngine:    ctxEngine,
+		router:           router,
+		decider:          decision.New(router),
+		memory:           store,
+		reflector:        reflection.New(),
+		verifier:         verification.New(r.WorkspaceRoot),
+		workspaceRoot:    r.WorkspaceRoot,
+		onStep:           opts.OnStep,
+		readFiles:        map[string]bool{},
+		toolSignatures:   map[string]int{},
+		requiresMutation: promptRequestsMutation(opts.Prompt),
 	}
 }
 
@@ -140,16 +143,19 @@ func (rt *autonomousRuntime) beforeModelTurn(ctx context.Context, messages []pro
 	decisionReport, decisionErr := rt.decider.Decide(ctx, rt.state, bundle)
 	if decisionErr == nil {
 		rt.lastDecision = decisionReport
+		rt.hypotheses = decisionReport.ActiveHypotheses
 		if decisionReport.SelectedAction.Tool.Name != "" {
 			rt.emit(agentloop.Event{
 				Type:   agentloop.EventToolSelected,
 				TaskID: rt.state.ActiveTaskID,
-				Summary: fmt.Sprintf("%s score=%.2f risk=%s",
+				Summary: fmt.Sprintf("%s score=%.2f risk=%s info=%.2f unc=%.2f",
 					decisionReport.SelectedAction.Tool.Name,
 					decisionReport.SelectedAction.Score,
 					decisionReport.SelectedAction.Tool.Risk.String(),
+					decisionReport.InformationGainEstimate,
+					decisionReport.RemainingUncertainty,
 				),
-				Data: map[string]any{"reason": decisionReport.Reason},
+				Data: map[string]any{"reason": decisionReport.Reason, "hypotheses": len(decisionReport.ActiveHypotheses)},
 			})
 		}
 	} else {
@@ -240,6 +246,15 @@ func (rt *autonomousRuntime) loopPrompt(decisionReport agentloop.ActionDecision)
 		b.WriteString(singleLine(strings.Join(decisionReport.ReviewerNotes, "; "), 500))
 		b.WriteString("\n")
 	}
+	if len(decisionReport.RecoveryActions) > 0 {
+		b.WriteString("- Recovery plan if selected action fails: ")
+		names := make([]string, 0, len(decisionReport.RecoveryActions))
+		for _, rec := range decisionReport.RecoveryActions {
+			names = append(names, rec.Tool.Name)
+		}
+		b.WriteString(strings.Join(names, ", "))
+		b.WriteString("\n")
+	}
 	if len(decisionReport.RejectedActions) > 0 {
 		b.WriteString("- Rejected actions: ")
 		names := make([]string, 0, len(decisionReport.RejectedActions))
@@ -266,6 +281,30 @@ func (rt *autonomousRuntime) loopPrompt(decisionReport agentloop.ActionDecision)
 		}
 		b.WriteString(strings.Join(names, ", "))
 		b.WriteString("\n")
+	}
+	if task != nil {
+		if task.SuccessCriteria != "" {
+			fmt.Fprintf(&b, "- Success criteria: %s\n", singleLine(task.SuccessCriteria, 160))
+		}
+		if task.FailureCriteria != "" {
+			fmt.Fprintf(&b, "- Failure criteria: %s\n", singleLine(task.FailureCriteria, 160))
+		}
+	}
+	// Hypothesis display
+	if len(decisionReport.ActiveHypotheses) > 0 {
+		b.WriteString(fmt.Sprintf("- Hypotheses: %d active, %.0f%% uncertainty\n", len(decisionReport.ActiveHypotheses), decisionReport.RemainingUncertainty*100))
+		if decisionReport.PrimaryHypothesis != nil {
+			b.WriteString(fmt.Sprintf("- Primary hypothesis: %s (prob=%.0f%% method=%s)\n",
+				singleLine(decisionReport.PrimaryHypothesis.Description, 100),
+				decisionReport.PrimaryHypothesis.Probability*100,
+				decisionReport.PrimaryHypothesis.VerificationMethod))
+		}
+		if decisionReport.InformationGainEstimate > 0 {
+			b.WriteString(fmt.Sprintf("- Selected action info gain: %.0f%%\n", decisionReport.InformationGainEstimate*100))
+		}
+		if len(decisionReport.RejectedHypotheses) > 0 {
+			b.WriteString(fmt.Sprintf("- %d rejected hypotheses\n", len(decisionReport.RejectedHypotheses)))
+		}
 	}
 	b.WriteString("Continue the loop: inspect only what is missing, edit only after evidence, recover from failures, and finish only after verification.")
 	return b.String()
@@ -376,8 +415,10 @@ func (rt *autonomousRuntime) afterTool(ctx context.Context, call tools.Call, res
 		TaskID:  rt.state.ActiveTaskID,
 		Summary: call.Name + " " + status,
 		Data: map[string]any{
-			"tool":    call.Name,
-			"mutates": isMutatingTool(call),
+			"tool":             call.Name,
+			"mutates":          isMutatingTool(call),
+			"mutation_applied": toolMutationApplied(call, result),
+			"success":          result.Error == "",
 		},
 		Evidence: []agentloop.EvidenceRef{{
 			Kind:    "tool",
@@ -387,6 +428,11 @@ func (rt *autonomousRuntime) afterTool(ctx context.Context, call tools.Call, res
 	})
 	rt.observeToolEffects(call, result)
 	rt.advanceTaskAfterTool(call, result)
+	// Update hypotheses based on tool result
+	if len(rt.hypotheses) > 0 {
+		updated, _ := decision.UpdateHypothesesAfterTool(rt.hypotheses, call.Name, result.Content, result.Error)
+		rt.hypotheses = updated
+	}
 	return rt.reflectAfterObservation(ctx, result)
 }
 
@@ -533,6 +579,10 @@ func (rt *autonomousRuntime) acceptFinalAnswer(ctx context.Context, answer strin
 			return false, "Final answer rejected: completion verification failed. Fix the diagnostics before finishing:\n\n" + verificationDiagnostics(result)
 		}
 	}
+	if rt.requiresMutation && !rt.hasSuccessfulMutationEvidence() && !finalAnswerExplainsNoMutation(answer) {
+		rt.finalBlocks++
+		return false, "Final answer rejected: this looks like a change request, but no successful file edit/write/patch tool has run. Find the correct file and apply the edit, or clearly say why no edit was possible."
+	}
 	if rt.hasCompletionEvidence() {
 		return true, ""
 	}
@@ -541,6 +591,21 @@ func (rt *autonomousRuntime) acceptFinalAnswer(ctx context.Context, answer strin
 		return false, "Final answer rejected repeatedly because there is still no evidence of completion; stop or ask for missing information instead of repeating the same conclusion."
 	}
 	return false, "Final answer rejected: completion requires evidence such as successful verification, successful relevant tool output, or confirmed requested file changes."
+}
+
+func (rt *autonomousRuntime) hasSuccessfulMutationEvidence() bool {
+	if rt == nil || rt.state == nil {
+		return false
+	}
+	for _, event := range rt.state.Events {
+		if event.Type != agentloop.EventToolCompleted {
+			continue
+		}
+		if eventBool(event.Data, "mutation_applied") && eventBool(event.Data, "success") {
+			return true
+		}
+	}
+	return false
 }
 
 func (rt *autonomousRuntime) hasCompletionEvidence() bool {
@@ -561,6 +626,70 @@ func (rt *autonomousRuntime) hasCompletionEvidence() bool {
 		}
 	}
 	return false
+}
+
+func eventBool(data map[string]any, key string) bool {
+	if data == nil {
+		return false
+	}
+	value, ok := data[key]
+	if !ok {
+		return false
+	}
+	b, ok := value.(bool)
+	return ok && b
+}
+
+func promptRequestsMutation(prompt string) bool {
+	text := strings.ToLower(prompt)
+	mutationWords := []string{
+		"add ", "change", "create", "delete", "edit", "fix", "implement",
+		"modify", "patch", "refactor", "remove", "rename", "repair",
+		"replace", "update", "write",
+	}
+	for _, word := range mutationWords {
+		if strings.Contains(text, word) {
+			return true
+		}
+	}
+	return false
+}
+
+func finalAnswerExplainsNoMutation(answer string) bool {
+	text := strings.ToLower(answer)
+	explanations := []string{
+		"could not modify", "couldn't modify", "unable to modify",
+		"did not modify", "no file was modified", "no files were modified",
+		"no edit was possible", "no changes were made", "i could not edit",
+		"i couldn't edit", "i was unable to edit",
+	}
+	for _, explanation := range explanations {
+		if strings.Contains(text, explanation) {
+			return true
+		}
+	}
+	return false
+}
+
+func toolMutationApplied(call tools.Call, result tools.Result) bool {
+	if !isMutatingTool(call) || result.Error != "" {
+		return false
+	}
+	preview, _ := call.Argument["preview"].(bool)
+	if preview {
+		return false
+	}
+	switch call.Name {
+	case "apply_patch":
+		for _, line := range strings.Split(result.Content, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "OK ") {
+				return true
+			}
+		}
+		return false
+	default:
+		return true
+	}
 }
 
 func (rt *autonomousRuntime) allPlannedWorkVerified() bool {
@@ -589,7 +718,7 @@ func (rt *autonomousRuntime) hasMutationWithoutVerification() bool {
 	verifiedAfterMutation := false
 	for _, event := range rt.state.Events {
 		if event.Type == agentloop.EventToolCompleted && event.Data != nil {
-			if mutates, _ := event.Data["mutates"].(bool); mutates && !strings.Contains(strings.ToLower(event.Summary), "failed") {
+			if eventBool(event.Data, "mutation_applied") && !strings.Contains(strings.ToLower(event.Summary), "failed") {
 				seenMutation = true
 				verifiedAfterMutation = false
 			}
@@ -640,7 +769,7 @@ func (rt *autonomousRuntime) reflectWithVerification(ctx context.Context, verifi
 	rt.state.SetPhase(agentloop.PhaseReflecting)
 	rt.state.Metrics.ReflectionRuns++
 	rt.emit(agentloop.Event{Type: agentloop.EventReflectionStarted, TaskID: rt.state.ActiveTaskID, Summary: "evaluating progress"})
-	report := rt.reflector.Reflect(ctx, rt.state, verificationResult)
+	report := rt.reflector.Reflect(ctx, rt.state, verificationResult, rt.hypotheses)
 	rt.state.Confidence = report.Confidence
 	rt.updateReflectionMetrics(report)
 	rt.emit(agentloop.Event{Type: agentloop.EventReflection, TaskID: rt.state.ActiveTaskID, Summary: reflectionSummary(report), Evidence: report.Evidence})

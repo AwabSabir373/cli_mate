@@ -129,6 +129,7 @@ func streamOpenAICompatible(ctx context.Context, body io.ReadCloser) <-chan cont
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" || strings.HasPrefix(line, ":") {
+				sendStreamEvent(ctx, events, contracts.StreamEvent{Heartbeat: true})
 				continue
 			}
 			if !strings.HasPrefix(line, "data:") {
@@ -167,6 +168,15 @@ func streamOpenAICompatible(ctx context.Context, body io.ReadCloser) <-chan cont
 		events <- contracts.StreamEvent{Done: true}
 	}()
 	return events
+}
+
+func sendStreamEvent(ctx context.Context, events chan<- contracts.StreamEvent, event contracts.StreamEvent) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case events <- event:
+		return true
+	}
 }
 
 func omitZero(value int) *int {

@@ -62,6 +62,7 @@ func (t *ApplyPatchTool) Execute(_ context.Context, call Call) (Result, error) {
 	}
 
 	var results []string
+	applied := 0
 	for _, file := range files {
 		resolved, err := resolveWorkspacePath(t.Root, file.Path)
 		if err != nil {
@@ -111,10 +112,16 @@ func (t *ApplyPatchTool) Execute(_ context.Context, call Call) (Result, error) {
 			results = append(results, fmt.Sprintf("FAIL %s: %v", file.Path, err))
 			continue
 		}
+		applied++
 		results = append(results, fmt.Sprintf("OK %s (%d hunks applied)", file.Path, len(file.Hunks)))
 	}
 
-	return Result{Content: strings.Join(results, "\n")}, nil
+	output := strings.Join(results, "\n")
+	if !preview && applied == 0 {
+		err := fmt.Errorf("no patch hunks were applied")
+		return Result{Content: output, Error: err.Error()}, err
+	}
+	return Result{Content: output}, nil
 }
 
 type patchFile struct {

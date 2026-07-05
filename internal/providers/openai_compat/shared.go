@@ -69,6 +69,11 @@ func ParseStream(ctx context.Context, body io.Reader) <-chan contracts.StreamEve
 			}
 
 			line := scanner.Text()
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, ":") {
+				ch <- contracts.StreamEvent{Heartbeat: true}
+				continue
+			}
 			if !strings.HasPrefix(line, "data: ") {
 				continue
 			}

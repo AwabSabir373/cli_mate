@@ -150,28 +150,6 @@ func (a App) renderPanelContent(header string, layout layoutConfig) string {
 		b.WriteString("\n")
 	}
 
-	// Streaming tool call preview
-	if a.streamingTool != nil && !a.streamingTool.completed {
-		toolView := streamingToolCallView(a.streamingTool, a.styles, layout.ChatWidth)
-		if toolView != "" {
-			b.WriteString(toolView)
-			b.WriteString("\n")
-		}
-	}
-
-	// Loading indicator
-	if a.loading {
-		b.WriteString(a.loadingText())
-		b.WriteString("\n\n")
-	} else if a.streamBuffer != "" && !a.loading {
-		// Streaming response preview with fade
-		preview := a.streamFade.render()
-		if preview != "" {
-			b.WriteString(preview)
-			b.WriteString("\n\n")
-		}
-	}
-
 	// Suggestions
 	if len(a.currentSuggestions()) > 0 {
 		b.WriteString(a.renderSuggestions())
@@ -183,6 +161,8 @@ func (a App) renderPanelContent(header string, layout layoutConfig) string {
 		b.WriteString(a.permissionPrompt.render(a.styles, layout.ChatWidth))
 		b.WriteString("\n\n")
 	}
+
+	b.WriteString(a.renderActivityStrip(layout.ChatWidth))
 
 	// Input prompt
 	b.WriteString(a.renderPrompt())
@@ -301,28 +281,6 @@ func (a App) renderChatContent(layout layoutConfig) string {
 		b.WriteString("\n")
 	}
 
-	// Show streaming tool call if active
-	if a.streamingTool != nil && !a.streamingTool.completed {
-		toolView := streamingToolCallView(a.streamingTool, a.styles, renderWidth)
-		if toolView != "" {
-			b.WriteString(toolView)
-			b.WriteString("\n")
-		}
-	}
-
-	// Show loading state
-	if a.loading {
-		b.WriteString(a.loadingText())
-		b.WriteString("\n\n")
-	} else if a.streamBuffer != "" {
-		// Fade-rendered streaming preview
-		preview := a.streamFade.render()
-		if preview != "" {
-			b.WriteString(preview)
-			b.WriteString("\n\n")
-		}
-	}
-
 	// Suggestions
 	if len(a.currentSuggestions()) > 0 {
 		b.WriteString(a.renderSuggestions())
@@ -335,8 +293,35 @@ func (a App) renderChatContent(layout layoutConfig) string {
 		b.WriteString("\n\n")
 	}
 
+	b.WriteString(a.renderActivityStrip(renderWidth))
+
 	// Input prompt
 	b.WriteString(a.renderPrompt())
+
+	return b.String()
+}
+
+func (a App) renderActivityStrip(width int) string {
+	var b strings.Builder
+
+	if a.streamingTool != nil && !a.streamingTool.completed {
+		toolView := streamingToolCallView(a.streamingTool, a.styles, width)
+		if toolView != "" {
+			b.WriteString(toolView)
+			b.WriteString("\n")
+		}
+	}
+
+	if a.loading {
+		b.WriteString(a.loadingText())
+		b.WriteString("\n\n")
+	} else if a.streamBuffer != "" && a.streamFade != nil {
+		preview := a.streamFade.render()
+		if preview != "" {
+			b.WriteString(preview)
+			b.WriteString("\n\n")
+		}
+	}
 
 	return b.String()
 }

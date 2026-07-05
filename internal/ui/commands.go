@@ -117,25 +117,10 @@ func (a *App) runCommand(raw string) {
 			cfg, err := config.LoadCustomMCPConfig(mcpFile)
 			if err != nil {
 				if os.IsNotExist(err) {
-					// Create default
-					cfg = &config.CustomMCPFile{
-						Name:    "Serena + Context7",
-						Version: "0.0.1",
-						Schema:  "v1",
-						MCPServers: []config.CustomMCPServer{
-							{
-								Name:    "serena-frontend",
-								Command: "C:/Users/awabs/.local/bin/serena.exe",
-								Args:    []string{"start-mcp-server", "--project", "D:/web/js_projects/onshope_admin_fe_js"},
-								Env:     make(map[string]string),
-							},
-							{
-								Name:    "context7",
-								Command: "npx",
-								Args:    []string{"-y", "@upstash/context7-mcp"},
-								Env:     make(map[string]string),
-							},
-						},
+					cfg, err = config.DefaultCustomMCPConfig()
+					if err != nil {
+						a.appendLog("error", fmt.Sprintf("Failed to create default MCP config: %v", err))
+						return
 					}
 					if err := config.SaveCustomMCPConfig(mcpFile, cfg); err != nil {
 						a.appendLog("error", fmt.Sprintf("Failed to create mcp.yml: %v", err))
@@ -146,6 +131,17 @@ func (a *App) runCommand(raw string) {
 					a.appendLog("error", fmt.Sprintf("Failed to load mcp.yml: %v", err))
 					return
 				}
+			} else if cfg.IsLegacyGeneratedDefault() {
+				cfg, err = config.DefaultCustomMCPConfig()
+				if err != nil {
+					a.appendLog("error", fmt.Sprintf("Failed to migrate default MCP config: %v", err))
+					return
+				}
+				if err := config.SaveCustomMCPConfig(mcpFile, cfg); err != nil {
+					a.appendLog("error", fmt.Sprintf("Failed to migrate mcp.yml: %v", err))
+					return
+				}
+				a.appendLog("system", "Migrated default MCP config to cli_mcp.")
 			}
 
 			// Update internal config and manager with custom servers

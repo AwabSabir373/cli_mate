@@ -39,6 +39,7 @@ type syncTickMsg struct{}
 type filesSyncedMsg []string
 type chatStreamMsg struct {
 	token string
+	clear bool
 	c     chan tea.Msg
 }
 type chatLoadingStepMsg struct {
@@ -330,8 +331,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.appendLog("system", approvalPromptOld(msg.call))
 		return a, nil
 	case chatStreamMsg:
+		if msg.clear {
+			a.streamBuffer = ""
+			a.streamFade.clear()
+		}
 		a.streamBuffer += msg.token
-		a.streamFade.addToken(msg.token)
+		if msg.token != "" {
+			a.streamFade.addToken(msg.token)
+		}
 		const maxStreamPreviewBytes = 1000
 		if len(a.streamBuffer) > maxStreamPreviewBytes {
 			a.streamBuffer = a.streamBuffer[len(a.streamBuffer)-maxStreamPreviewBytes:]

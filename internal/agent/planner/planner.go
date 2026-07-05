@@ -77,8 +77,7 @@ func (p *HeuristicPlanner) Replan(ctx context.Context, state *agentloop.RunState
 		return nil, err
 	}
 	if report.FailureReason != "" {
-		recovery := child(graph.RootID, "Recover from failure: "+report.FailureReason, 95, agentloop.RiskReadOnly, p.MaxAttempts, time.Now().UTC())
-		recovery.Verification = DefaultGoVerificationSpec()
+		recovery := child(graph.RootID, "Inspect diagnostics and recover from failure: "+report.FailureReason, 95, agentloop.RiskReadOnly, p.MaxAttempts, time.Now().UTC())
 		graph.Nodes[recovery.ID] = recovery
 		graph.Order = append([]string{recovery.ID}, graph.Order...)
 	}
@@ -87,16 +86,18 @@ func (p *HeuristicPlanner) Replan(ctx context.Context, state *agentloop.RunState
 
 func child(parentID, goal string, priority int, risk agentloop.RiskLevel, maxAttempts int, now time.Time) *agentloop.TaskNode {
 	return &agentloop.TaskNode{
-		ID:          agentloop.NewID("task"),
-		ParentID:    parentID,
-		Goal:        goal,
-		Status:      agentloop.TaskPending,
-		Priority:    priority,
-		Risk:        risk,
-		Confidence:  0.4,
-		MaxAttempts: maxAttempts,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:              agentloop.NewID("task"),
+		ParentID:        parentID,
+		Goal:            goal,
+		Status:          agentloop.TaskPending,
+		Priority:        priority,
+		Risk:            risk,
+		Confidence:      0.4,
+		MaxAttempts:     maxAttempts,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		SuccessCriteria: criteriaForGoal(goal),
+		FailureCriteria: "task goal not achieved or verification failed after max attempts",
 	}
 }
 
@@ -142,6 +143,22 @@ func DefaultGoVerificationSpec() agentloop.VerificationSpec {
 			{Description: "Ensure no unrelated user changes were reverted."},
 		},
 		RequiredPasses: []string{"gofmt", "go test", "go vet", "go build"},
+	}
+}
+
+func criteriaForGoal(goal string) string {
+	lowered := strings.ToLower(goal)
+	switch {
+	case strings.Contains(lowered, "inspect"), strings.Contains(lowered, "diagnostic"):
+		return "relevant files, commands, or diagnostics read and understood"
+	case strings.Contains(lowered, "implement"), strings.Contains(lowered, "apply"), strings.Contains(lowered, "change"), strings.Contains(lowered, "edit"):
+		return "correct code or configuration changes applied and verified"
+	case strings.Contains(lowered, "verify"), strings.Contains(lowered, "test"), strings.Contains(lowered, "build"), strings.Contains(lowered, "format"):
+		return "all required checks (test, vet, build, format) pass"
+	case strings.Contains(lowered, "summarize"), strings.Contains(lowered, "plan"):
+		return "concise summary or plan produced with supporting evidence"
+	default:
+		return "task goal achieved with confidence >= 0.8"
 	}
 }
 

@@ -37,6 +37,7 @@ type chatDoneMsg struct {
 const (
 	streamFlushInterval = 100 * time.Millisecond
 	streamFlushBytes    = 512
+	chatIdleNotice      = 30 * time.Second
 )
 
 func waitForChatMsg(c chan tea.Msg) tea.Cmd {
@@ -104,10 +105,51 @@ func (a *App) startChat(text string) tea.Cmd {
 }
 
 func runChatAsync(parent context.Context, app *App, profile config.Profile, provider providers.Provider, history []providers.Message, text string, workspaceRoot string, instructions string, mcpConfigs []config.MCPConfig, c chan tea.Msg) {
-	// Use a timeout so the CLI doesn't hang forever if the provider stream stalls
-	ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
+	activity := make(chan struct{}, 1)
+	done := make(chan struct{})
+	defer close(done)
 	defer close(c)
+	go func() {
+		timer := time.NewTimer(chatIdleNotice)
+		defer timer.Stop()
+		waited := chatIdleNotice
+		for {
+			select {
+			case <-activity:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				waited = chatIdleNotice
+				timer.Reset(chatIdleNotice)
+			case <-timer.C:
+				msg := chatLoadingStepMsg{text: fmt.Sprintf("Waiting for provider response (%s without output)", waited), c: c}
+				select {
+				case c <- msg:
+				case <-done:
+				case <-parent.Done():
+				default:
+				}
+				waited += chatIdleNotice
+				timer.Reset(chatIdleNotice)
+			case <-done:
+				return
+			case <-parent.Done():
+				return
+			}
+		}
+	}()
+	resetActivity := func() {
+		select {
+		case activity <- struct{}{}:
+		default:
+		}
+	}
+	resetActivity()
 	counter := tokenizer.New(profile.Model)
 	prompt, mentionEntries := promptWithMentions(workspaceRoot, text)
 	casualPrompt := agent.IsConversationalPrompt(text)
@@ -120,6 +162,9 @@ func runChatAsync(parent context.Context, app *App, profile config.Profile, prov
 
 	c <- chatLoadingStepMsg{text: fmt.Sprintf("Calling %s %s", profile.Provider, profile.Model), c: c}
 	var pendingStream strings.Builder
+	var filter streamFilter
+	lastToolDraftName := ""
+	lastToolDraftPath := ""
 	lastStreamFlush := time.Now()
 	flushStream := func(force bool) {
 		if pendingStream.Len() == 0 {
@@ -185,6 +230,7 @@ func runChatAsync(parent context.Context, app *App, profile config.Profile, prov
 	// Connect MCP servers
 	var mcpClients []*tools.MCPClient
 	for _, mc := range mcpConfigs {
+		resetActivity()
 		client := tools.NewMCPClient(mc.Command, mc.Args)
 		if err := client.Connect(ctx); err != nil {
 			c <- chatStepMsg{entry: logEntry{Kind: "error", Text: fmt.Sprintf("MCP server %q failed: %v", mc.Name, err), Time: time.Now()}, c: c}
@@ -214,6 +260,7 @@ func runChatAsync(parent context.Context, app *App, profile config.Profile, prov
 		Temperature:   profile.Temperature,
 		Counter:       counter,
 		OnStep: func(step agent.Step) {
+			resetActivity()
 			entry := logEntry{Kind: step.Kind, Text: step.Text, Time: time.Now()}
 			c <- chatStepMsg{entry: entry, c: c}
 			c <- chatLoadingStepMsg{text: step.Text, c: c}
@@ -227,19 +274,40 @@ func runChatAsync(parent context.Context, app *App, profile config.Profile, prov
 			}
 		},
 		OnContext: func(tokens int) {
+			resetActivity()
 			c <- chatContextMsg{tokens: tokens, c: c}
 		},
 		OnToken: func(token string) {
-			pendingStream.WriteString(token)
-			flushStream(false)
+			resetActivity()
+			filtered := filter.Push(token)
+			if filtered.ToolStarted {
+				pendingStream.Reset()
+				c <- chatStreamMsg{clear: true, c: c}
+				c <- chatLoadingStepMsg{text: "Preparing tool call", c: c}
+			}
+			if filtered.ToolDraft != "" {
+				name := streamedToolName(filtered.ToolDraft)
+				path := streamingFilePath(filtered.ToolDraft)
+				if filtered.ToolStarted || name != lastToolDraftName || path != lastToolDraftPath {
+					lastToolDraftName = name
+					lastToolDraftPath = path
+					c <- chatToolCallMsg{toolName: name, args: filtered.ToolDraft, c: c}
+				}
+			}
+			if filtered.Visible != "" {
+				pendingStream.WriteString(filtered.Visible)
+				flushStream(false)
+			}
 		},
 		OnUsage: func(u providers.Usage) {
 			// Token usage from compaction summarizer calls.
 			_ = u
 		},
+		OnActivity:    resetActivity,
 		DisableTools:  casualPrompt,
 		SelfCorrector: selfCorrector,
 		ApproveTool: func(call tools.Call) bool {
+			resetActivity()
 			currentProfile := app.activeProfile()
 			path, _ := call.Argument["path"].(string)
 
@@ -262,6 +330,9 @@ func runChatAsync(parent context.Context, app *App, profile config.Profile, prov
 			return true
 		},
 	})
+	if visible := filter.Flush(); visible != "" {
+		pendingStream.WriteString(visible)
+	}
 	flushStream(true)
 	if err != nil {
 		c <- chatStepMsg{entry: logEntry{Kind: "error", Text: err.Error(), Time: time.Now()}, c: c}

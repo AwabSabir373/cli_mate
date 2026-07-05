@@ -21,28 +21,55 @@ func New() *Engine {
 	}
 }
 
-func (e *Engine) Reflect(_ context.Context, state *agentloop.RunState, verification agentloop.VerificationResult) agentloop.ReflectionReport {
+func (e *Engine) Reflect(ctx context.Context, state *agentloop.RunState, verification agentloop.VerificationResult, hypotheses []agentloop.Hypothesis) agentloop.ReflectionReport {
 	task := state.ActiveTask()
 	report := agentloop.ReflectionReport{Confidence: state.Confidence}
 
+	// Hypothesis-aware reflection: check which hypotheses are resolved.
+	resolvedCount := 0
+	totalActive := 0
+	for _, h := range hypotheses {
+		if h.State == agentloop.HypothesisConfirmed || h.State == agentloop.HypothesisRejected {
+			resolvedCount++
+		} else {
+			totalActive++
+		}
+	}
+	if len(hypotheses) > 0 {
+		resolutionRate := float64(resolvedCount) / float64(len(hypotheses))
+		if resolutionRate > 0.5 {
+			report.ProgressDelta += 0.15
+			report.Confidence = clamp(report.Confidence+0.1, 0, 1)
+		}
+		if resolutionRate >= 1.0 {
+			report.ProgressDelta += 0.2
+			report.Confidence = clamp(report.Confidence+0.15, 0, 1)
+		}
+		// If no hypotheses were resolved and we've been running, suggest replan
+		if resolutionRate == 0 && state.Iteration > 3 {
+			report.FailureReason = "no hypotheses resolved after multiple iterations; replanning needed"
+			report.ReplanNeeded = true
+		}
+	}
+
 	if verification.Status == agentloop.VerificationPassed {
-		report.ProgressDelta = 1
-		report.Confidence = clamp(state.Confidence+0.35, 0, 1)
+		report.ProgressDelta = clamp(report.ProgressDelta+0.85, 0, 1)
+		report.Confidence = clamp(report.Confidence+0.25, 0, 1)
 		report.Evidence = verification.Evidence
 		return report
 	}
 
 	if verification.Status == agentloop.VerificationFailed {
-		report.ProgressDelta = -0.2
-		report.Confidence = clamp(state.Confidence-0.2, 0, 1)
+		report.ProgressDelta = clamp(report.ProgressDelta-0.2, -1, 1)
+		report.Confidence = clamp(report.Confidence-0.2, 0, 1)
 		report.FailureReason = verification.Summary
 		report.ReplanNeeded = true
 	}
 
 	if verification.Status == agentloop.VerificationUnknown {
 		if lastToolSucceeded(state.Events, taskID(task)) {
-			report.ProgressDelta = 0.1
-			report.Confidence = clamp(state.Confidence+0.05, 0, 0.85)
+			report.ProgressDelta = clamp(report.ProgressDelta+0.1, 0, 1)
+			report.Confidence = clamp(report.Confidence+0.05, 0, 0.85)
 		}
 		if repeatedAction(state.Events, taskID(task), 3) {
 			report.ProgressDelta = 0

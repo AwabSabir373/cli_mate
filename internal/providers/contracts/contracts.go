@@ -34,6 +34,7 @@ type StreamEvent struct {
 	ToolCalls []ToolCall
 	Err       error
 	Done      bool
+	Heartbeat bool
 	Usage     Usage
 }
 

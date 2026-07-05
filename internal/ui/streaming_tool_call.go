@@ -104,19 +104,25 @@ func streamingFilePath(args string) string {
 
 // streamingToolCallView renders the in-progress tool call UI.
 func streamingToolCallView(tc *streamingToolCall, styles appStyles, width int) string {
-	if tc == nil || !isFileWritingTool(tc.name) {
+	if tc == nil || strings.TrimSpace(tc.name) == "" {
 		return ""
 	}
 
 	// Show path with status indicator
 	pathDisplay := tc.path
 	if pathDisplay == "" {
-		pathDisplay = "resolving..."
+		pathDisplay = strings.TrimSpace(tc.name)
 	}
 
 	var b strings.Builder
 	statusIcon := styles.spinner.Render("✎")
-	b.WriteString(styles.roleTool.Render(fmt.Sprintf("%s %s", statusIcon, pathDisplay)))
+	status := "preparing"
+	if isFileWritingTool(tc.name) {
+		status = "writing"
+	} else if strings.Contains(strings.ToLower(tc.name), "read") || strings.Contains(strings.ToLower(tc.name), "grep") || strings.Contains(strings.ToLower(tc.name), "glob") {
+		status = "reading"
+	}
+	b.WriteString(styles.roleTool.Render(fmt.Sprintf("%s %s %s", statusIcon, status, pathDisplay)))
 	b.WriteString("\n")
 
 	// Show content tail with syntax highlighting

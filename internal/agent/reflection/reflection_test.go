@@ -16,7 +16,7 @@ func TestReflectionStopsAfterTaskRetryBudget(t *testing.T) {
 	report := New().Reflect(context.Background(), state, agentloop.VerificationResult{
 		Status:  agentloop.VerificationFailed,
 		Summary: "go test failed",
-	})
+	}, nil)
 	if !report.StopRecommended {
 		t.Fatal("expected stop recommendation after retry budget")
 	}

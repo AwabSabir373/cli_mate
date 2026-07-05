@@ -178,14 +178,9 @@ func ensureDefaults(cfg *Config) {
 		}
 	}
 	if !hasCliMCP {
-		// Use os.Executable to get the path of the current binary
-		exe, err := os.Executable()
+		builtin, err := BuiltinMCPConfig()
 		if err == nil {
-			cfg.MCP = append(cfg.MCP, MCPConfig{
-				Name:    "cli_mcp",
-				Command: exe,
-				Args:    []string{"mcp-server"},
-			})
+			cfg.MCP = append(cfg.MCP, builtin)
 		}
 	}
 }

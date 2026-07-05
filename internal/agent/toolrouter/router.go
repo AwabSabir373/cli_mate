@@ -194,6 +194,7 @@ func inferDescriptor(def tools.Definition) agentloop.ToolDescriptor {
 		Risk:             agentloop.RiskReadOnly,
 		Cost:             agentloop.ToolCost{Tokens: 250, Latency: 250 * time.Millisecond},
 		SupportsParallel: true,
+		Reversible:       true,
 		Definition:       def,
 	}
 	switch {
@@ -206,14 +207,17 @@ func inferDescriptor(def tools.Definition) agentloop.ToolDescriptor {
 		desc.Risk = agentloop.RiskCommand
 		desc.Cost = agentloop.ToolCost{Tokens: 500, Latency: 2 * time.Second}
 		desc.SupportsParallel = false
+		desc.Reversible = false
 	case strings.Contains(name, "web"):
 		desc.Kind = agentloop.ToolSearch
 		desc.Capabilities = append(desc.Capabilities, "search", "fetch", "docs")
 		desc.Risk = agentloop.RiskNetwork
+		desc.Reversible = false
 	case strings.Contains(name, "mcp"):
 		desc.Kind = agentloop.ToolMCP
 		desc.Capabilities = append(desc.Capabilities, "remote_tool", "dynamic")
 		desc.Risk = agentloop.RiskNetwork
+		desc.Reversible = false
 	case strings.Contains(name, "diff") || strings.Contains(name, "commit") || strings.Contains(name, "worktree"):
 		desc.Kind = agentloop.ToolGit
 		desc.Capabilities = append(desc.Capabilities, "git", "diff", "checkpoint")
@@ -223,6 +227,10 @@ func inferDescriptor(def tools.Definition) agentloop.ToolDescriptor {
 		desc.Mutates = true
 		desc.Risk = maxRisk(desc.Risk, agentloop.RiskLocalEdit)
 		desc.SupportsParallel = false
+		// file_edit with patch is reversible; file_write overwrites entirely
+		if strings.Contains(name, "write") || strings.Contains(name, "commit") {
+			desc.Reversible = false
+		}
 	}
 	return desc
 }

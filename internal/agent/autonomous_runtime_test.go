@@ -141,6 +141,97 @@ func TestCodingRunnerRunsSafeNativeToolBatchInParallel(t *testing.T) {
 	}
 }
 
+func TestParseToolCallAcceptsUnclosedToolFenceWithCompleteJSON(t *testing.T) {
+	call, ok, err := parseToolCall("thinking\n```cli_mate-tool\n{\"tool\":\"file_read\",\"arguments\":{\"path\":\"src/components/card.tsx\"}}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected tool call")
+	}
+	if call.Name != "file_read" {
+		t.Fatalf("expected file_read, got %q", call.Name)
+	}
+	if call.Argument["path"] != "src/components/card.tsx" {
+		t.Fatalf("expected path argument, got %#v", call.Argument)
+	}
+}
+
+func TestParseToolCallRejectsIncompleteUnclosedToolFence(t *testing.T) {
+	_, ok, err := parseToolCall("thinking\n```cli_mate-tool\n{\"tool\":\"file_read\",\"arguments\":{\"path\":\"src/components")
+	if !ok {
+		t.Fatal("expected malformed tool call to be recognized")
+	}
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "incomplete JSON") {
+		t.Fatalf("expected incomplete JSON error, got %v", err)
+	}
+}
+
+func TestAcceptFinalAnswerRejectsMutationClaimWithoutEdit(t *testing.T) {
+	root := t.TempDir()
+	runner := NewCodingRunner(&scriptedProvider{}, "", []tools.Tool{
+		tools.NewGlobTool(root),
+		tools.NewFileEditTool(root),
+	}, root)
+	rt := runner.newAutonomousRuntime(RunOptions{
+		Prompt:    "fix the product card slug overflow",
+		MaxTokens: 8000,
+		Counter:   tokenizer.NewApproxCounter(),
+	}, 3)
+	rt.emit(agentloop.Event{
+		Type:    agentloop.EventToolCompleted,
+		Summary: "glob completed",
+		Data: map[string]any{
+			"tool":             "glob",
+			"mutates":          false,
+			"mutation_applied": false,
+			"success":          true,
+		},
+	})
+
+	accepted, feedback := rt.acceptFinalAnswer(context.Background(), "Task complete. File modified: app/dashboard/products/components/product-card.tsx")
+	if accepted {
+		t.Fatal("expected false completion claim to be rejected")
+	}
+	if !strings.Contains(feedback, "no successful file edit/write/patch tool has run") {
+		t.Fatalf("expected mutation evidence feedback, got %q", feedback)
+	}
+}
+
+func TestAcceptFinalAnswerAllowsCompletionAfterSuccessfulEdit(t *testing.T) {
+	root := t.TempDir()
+	runner := NewCodingRunner(&scriptedProvider{}, "", []tools.Tool{
+		tools.NewFileEditTool(root),
+	}, root)
+	rt := runner.newAutonomousRuntime(RunOptions{
+		Prompt:    "fix the product card slug overflow",
+		MaxTokens: 8000,
+		Counter:   tokenizer.NewApproxCounter(),
+	}, 3)
+	rt.emit(agentloop.Event{
+		Type:    agentloop.EventToolCompleted,
+		Summary: "file_edit completed",
+		Data: map[string]any{
+			"tool":             "file_edit",
+			"mutates":          true,
+			"mutation_applied": true,
+			"success":          true,
+		},
+	})
+	rt.emit(agentloop.Event{
+		Type:    agentloop.EventVerificationPassed,
+		Summary: "verification passed",
+	})
+
+	accepted, feedback := rt.acceptFinalAnswer(context.Background(), "Updated product-card.tsx and verified the change.")
+	if !accepted {
+		t.Fatalf("expected successful edit evidence to allow final answer, got %q", feedback)
+	}
+}
+
 func hasEvent(events []agentloop.Event, kind agentloop.EventType) bool {
 	for _, event := range events {
 		if event.Type == kind {

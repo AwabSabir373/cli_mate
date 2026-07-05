@@ -11,6 +11,7 @@ type StreamHandler struct {
 	OnToken     func(string)
 	OnError     func(error)
 	OnToolCalls func([]providers.ToolCall)
+	OnActivity  func()
 }
 
 func (h StreamHandler) Consume(ctx context.Context, events <-chan providers.StreamEvent) (string, []providers.ToolCall, error) {
@@ -29,6 +30,9 @@ func (h StreamHandler) Consume(ctx context.Context, events <-chan providers.Stre
 					h.OnError(event.Err)
 				}
 				return builder.String(), toolCalls, event.Err
+			}
+			if h.OnActivity != nil {
+				h.OnActivity()
 			}
 			if event.Delta != "" {
 				builder.WriteString(event.Delta)
