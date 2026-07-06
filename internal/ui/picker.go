@@ -107,8 +107,8 @@ func (gp *genericPicker) handleKey(key string) (string, bool) {
 			}
 			return "", false
 		default:
-			if len(key) == 1 {
-				gp.query += key
+			if text, ok := keyText(key); ok {
+				gp.query += text
 				gp.applyFilter()
 			}
 			return "", false

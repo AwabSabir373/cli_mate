@@ -17,17 +17,160 @@ const (
 	rowSystem     rowKind = "system"
 	rowError      rowKind = "error"
 	rowReasoning  rowKind = "reasoning"
+	rowWelcome    rowKind = "welcome"
+	rowRecap      rowKind = "recap"
 )
 
 // transcriptRow represents a single row in the conversation transcript.
+type status string
+
+const (
+	statusOK    status = "ok"
+	statusError status = "error"
+)
+
 type transcriptRow struct {
-	kind      rowKind
-	text      string
-	detail    string // For multi-line outputs like diffs
-	tool      string // Tool name if this is a tool call
-	expanded  bool   // For collapsible content
-	final     bool   // Whether the content is complete (vs streaming)
-	timestamp time.Time
+	kind         rowKind
+	id           string
+	text         string
+	detail       string
+	tool         string
+	arg          string
+	status       status
+	failed       bool
+	runID        int
+	final        bool
+	turnTools    int
+	turnElapsed  time.Duration
+	changedFiles []string
+	timestamp    time.Time
+	expanded     bool
+}
+
+// startsTurn reports whether a row kind begins a new user or assistant turn.
+func startsTurn(k rowKind) bool {
+	return k == rowUser || k == rowAssistant
+}
+
+// transcriptAction is a sum type describing a mutation on a transcript slice.
+// It is processed by reduceTranscript which appends, replaces, or inserts the
+// action's row. The Redux-style reducer keeps the transcript update logic in
+// one place – no scattered append/edit/replace calls across handlers.
+type transcriptAction struct {
+	kind transcriptActionKind
+	row  transcriptRow
+	text string
+}
+
+type transcriptActionKind int
+
+const (
+	actionAppendUser transcriptActionKind = iota
+	actionAppendAssistant
+	actionAppendToolCall
+	actionAppendToolResult
+	actionAppendSystem
+	actionAppendError
+	actionAppendReasoning
+	actionReplaceLast
+	actionInsertAfter
+)
+
+// reduceTranscript applies an action to a transcript slice and returns the
+// updated slice.
+func reduceTranscript(rows []transcriptRow, action transcriptAction) []transcriptRow {
+	switch action.kind {
+	case actionAppendUser, actionAppendAssistant, actionAppendToolCall, actionAppendToolResult, actionAppendSystem, actionAppendError, actionAppendReasoning:
+		return append(rows, action.row)
+	case actionReplaceLast:
+		if len(rows) > 0 {
+			rows[len(rows)-1] = action.row
+		}
+		return rows
+	case actionInsertAfter:
+		for i, r := range rows {
+			if r.kind == action.row.kind && r.id != "" && r.id == action.row.id {
+				rows = append(rows[:i+1], append([]transcriptRow{action.row}, rows[i+1:]...)...)
+				return rows
+			}
+		}
+		return append(rows, action.row)
+	}
+	return rows
+}
+
+// appendTranscriptRow is a convenience wrapper that creates an action and
+// reduces it in one call.
+func appendTranscriptRow(rows []transcriptRow, row transcriptRow) []transcriptRow {
+	return reduceTranscript(rows, transcriptAction{kind: actionForKind(row.kind), row: row})
+}
+
+func actionForKind(k rowKind) transcriptActionKind {
+	switch k {
+	case rowUser:
+		return actionAppendUser
+	case rowAssistant:
+		return actionAppendAssistant
+	case rowToolCall:
+		return actionAppendToolCall
+	case rowToolResult:
+		return actionAppendToolResult
+	case rowSystem:
+		return actionAppendSystem
+	case rowError:
+		return actionAppendError
+	case rowReasoning:
+		return actionAppendReasoning
+	default:
+		return actionAppendSystem
+	}
+}
+
+// Agent message types for async communication between agent goroutine and UI.
+type agentTextMsg struct {
+	runID int
+	delta string
+}
+
+type agentReasoningMsg struct {
+	runID int
+	delta string
+}
+
+type agentRowMsg struct {
+	runID int
+	row   transcriptRow
+}
+
+type agentResponseMsg struct {
+	runID       int
+	rows        []transcriptRow
+	err         error
+	turnTools   int
+	turnElapsed time.Duration
+}
+
+type toolCallStreamStartMsg struct {
+	runID int
+	id    string
+	name  string
+}
+
+type toolCallStreamDeltaMsg struct {
+	runID    int
+	id       string
+	fragment string
+}
+
+type planUpdateMsg struct {
+	runID int
+	items []planItem
+}
+
+type planItem struct {
+	Status  string
+	Content string
+	Notes   string
 }
 
 // transcript manages the structured conversation history.

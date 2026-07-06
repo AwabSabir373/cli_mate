@@ -1,12 +1,13 @@
 package ui
 
 import (
+	"image/color"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 const (
@@ -28,7 +29,7 @@ type fadeToken struct {
 }
 
 // newStreamingFade creates a new streaming fade state.
-func newStreamingFade(accent lipgloss.TerminalColor, muted lipgloss.TerminalColor) *streamingFadeState {
+func newStreamingFade(accent color.Color, muted color.Color) *streamingFadeState {
 	enabled := !reducedMotionEnabled()
 
 	sf := &streamingFadeState{

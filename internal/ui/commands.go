@@ -209,11 +209,11 @@ func (a *App) runCommand(raw string) {
 		}
 	case "rename":
 		// Rename current session
-		if a.sessionCtrls != nil && len(args) >= 1 {
-			newName := strings.Join(args, " ")
+		if len(args) >= 1 {
+			a.handleSessionControlAction("rename:" + strings.Join(args, " "))
+		} else if a.sessionCtrls != nil {
 			a.sessionCtrls.show()
-			// Delegate rename to session controls
-			a.appendLog("system", fmt.Sprintf("Session renamed to \"%s\"", newName))
+			a.sessionCtrls.action = actionRename
 		}
 	case "output":
 		// Open command output viewer
@@ -353,10 +353,14 @@ func (a *App) setTheme(args []string) {
 }
 
 func (a *App) toggleAutoApprove() {
+	if a.cfg == nil {
+		a.appendLog("error", "No configuration loaded.")
+		return
+	}
 	_ = a.cfg.UpdateActive(func(profile *config.Profile) {
 		profile.AutoApprove = !profile.AutoApprove
 	})
-	profile, _ := a.cfg.Active()
+	profile := a.activeProfile()
 	if profile.AutoApprove {
 		a.appendLog("system", "Auto-approve enabled. Tools will run without confirmation.")
 	} else {

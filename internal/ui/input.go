@@ -3,8 +3,8 @@ package ui
 import (
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/atotto/clipboard"
-	tea "github.com/charmbracelet/bubbletea"
 
 	"cli_mate/internal/providers/registry"
 )
@@ -89,8 +89,31 @@ func (a *App) submit() tea.Cmd {
 		return nil
 	}
 
+	// Shell escape: !command runs outside the agent
+	if strings.HasPrefix(text, "!") {
+		cmdText := strings.TrimSpace(text[1:])
+		if cmdText == "" {
+			a.appendLog("system", "Usage: !<shell command>")
+			return nil
+		}
+		a.appendLog("system", "$ "+cmdText)
+		return runBashEscape(a.workspaceRoot, cmdText)
+	}
+
 	if a.loading {
 		a.appendLog("error", "Wait for the current response to finish before sending another message.")
+		return nil
+	}
+
+	// Check for MCP setup intent
+	if intent, ok := detectMCPSetupIntent(text); ok {
+		a.appendLog("system", "Detected MCP setup request: "+intent.ServerName)
+		if intent.Endpoint != "" {
+			a.appendLog("system", "Endpoint: "+intent.Endpoint)
+		}
+		if a.mcpManager != nil {
+			a.mcpManager.show()
+		}
 		return nil
 	}
 

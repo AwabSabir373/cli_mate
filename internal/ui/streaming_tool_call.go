@@ -15,6 +15,25 @@ type streamingToolCall struct {
 	content   string
 	args      string
 	completed bool
+	decoder   *streamingDecoder // incremental JSON decoder for content preview
+}
+
+// feedArgs incrementally feeds tool call arguments to the decoder for live
+// content preview. The decoder extracts path and content lines as they stream.
+func (tc *streamingToolCall) feedArgs(fragment string) {
+	if tc.decoder == nil {
+		tc.decoder = newStreamingDecoder()
+	}
+	tc.decoder.feed(fragment)
+	// Update path from decoder
+	if tc.decoder.path != "" {
+		tc.path = tc.decoder.path
+	}
+	// Update content preview from decoder tail
+	if tc.decoder.hasContent() {
+		lines := tc.decoder.tailLines()
+		tc.content = strings.Join(lines, "\n")
+	}
 }
 
 // isFileWritingTool checks if the tool writes to files.
@@ -115,7 +134,7 @@ func streamingToolCallView(tc *streamingToolCall, styles appStyles, width int) s
 	}
 
 	var b strings.Builder
-	statusIcon := styles.spinner.Render("✎")
+	statusIcon := styles.spinner.Render(">")
 	status := "preparing"
 	if isFileWritingTool(tc.name) {
 		status = "writing"
@@ -147,7 +166,7 @@ func streamingToolCallView(tc *streamingToolCall, styles appStyles, width int) s
 		}
 
 		b.WriteString(styles.softPanel.
-			Width(width - 8).
+			Width(max(20, width-8)).
 			Render(content))
 		b.WriteString("\n")
 	}
@@ -164,7 +183,7 @@ func streamingToolCallView(tc *streamingToolCall, styles appStyles, width int) s
 	}
 	if lineCount > 0 {
 		sizeStr := formatByteCount(byteCount)
-		b.WriteString(styles.muted.Render(fmt.Sprintf("  %d lines · %s", lineCount, sizeStr)))
+		b.WriteString(styles.muted.Render(fmt.Sprintf("  %d lines | %s", lineCount, sizeStr)))
 		b.WriteString("\n")
 	} else {
 		b.WriteString(styles.muted.Render("  writing..."))
@@ -172,6 +191,33 @@ func streamingToolCallView(tc *streamingToolCall, styles appStyles, width int) s
 	}
 
 	return b.String()
+}
+
+// skipJSONSpace advances past JSON insignificant whitespace.
+func skipJSONSpace(s string, i int) int {
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r') {
+		i++
+	}
+	return i
+}
+
+// jsonStringValueStart finds `"key"` then, tolerating whitespace around the colon,
+// returns the index just past the opening quote of its string value, or -1.
+func jsonStringValueStart(s, key string) int {
+	marker := `"` + key + `"`
+	idx := strings.Index(s, marker)
+	if idx < 0 {
+		return -1
+	}
+	i := skipJSONSpace(s, idx+len(marker))
+	if i >= len(s) || s[i] != ':' {
+		return -1
+	}
+	i = skipJSONSpace(s, i+1)
+	if i >= len(s) || s[i] != '"' {
+		return -1
+	}
+	return i + 1
 }
 
 // formatByteCount formats byte count as human-readable string.

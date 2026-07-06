@@ -48,6 +48,7 @@ func newSessionControls() *sessionControls {
 // show opens the session controls panel.
 func (sc *sessionControls) show() {
 	sc.visible = true
+	sc.action = ""
 	sc.cursor = 0
 	sc.err = ""
 	sc.completedMsg = ""
@@ -56,6 +57,7 @@ func (sc *sessionControls) show() {
 // hide closes the session controls panel.
 func (sc *sessionControls) hide() {
 	sc.visible = false
+	sc.action = ""
 	sc.err = ""
 	sc.completedMsg = ""
 	sc.renameInput = ""
@@ -86,6 +88,10 @@ func (sc *sessionControls) handleKey(key string) (string, bool) {
 		return sc.handleRenameKey(key)
 	case actionExport:
 		return sc.handleExportKey(key)
+	case actionRewind:
+		return sc.handleRewindKey(key)
+	case actionCompact:
+		return sc.handleCompactKey(key)
 	default:
 		return sc.handleMainKey(key)
 	}
@@ -140,8 +146,8 @@ func (sc *sessionControls) handleRenameKey(key string) (string, bool) {
 		sc.err = ""
 		return "", false
 	default:
-		if len(key) == 1 && key != "\n" && key != "\r" {
-			sc.renameInput += key
+		if text, ok := keyText(key); ok {
+			sc.renameInput += text
 		} else if key == "backspace" && len(sc.renameInput) > 0 {
 			sc.renameInput = sc.renameInput[:len(sc.renameInput)-1]
 		}
@@ -160,13 +166,64 @@ func (sc *sessionControls) handleExportKey(key string) (string, bool) {
 		sc.err = ""
 		return "", false
 	default:
-		if len(key) == 1 && key != "\n" && key != "\r" {
-			sc.exportPath += key
+		if text, ok := keyText(key); ok {
+			sc.exportPath += text
 		} else if key == "backspace" && len(sc.exportPath) > 0 {
 			sc.exportPath = sc.exportPath[:len(sc.exportPath)-1]
 		}
 	}
 
+	return "", false
+}
+
+func (sc *sessionControls) handleRewindKey(key string) (string, bool) {
+	if len(sc.checkpoints) == 0 {
+		if key == "esc" || key == "enter" || key == " " {
+			sc.action = ""
+			sc.cursor = 0
+		}
+		return "", false
+	}
+
+	switch key {
+	case "up", "shift+tab":
+		if sc.cursor > 0 {
+			sc.cursor--
+		}
+	case "down", "tab":
+		if sc.cursor < len(sc.checkpoints)-1 {
+			sc.cursor++
+		}
+	case "enter", " ":
+		cp := sc.checkpoints[clamp(sc.cursor, 0, len(sc.checkpoints)-1)]
+		sc.completedMsg = fmt.Sprintf("Rewound to %s", cp.label)
+		return fmt.Sprintf("rewind:%d", cp.index), true
+	case "esc":
+		sc.action = ""
+		sc.cursor = 0
+	}
+	return "", false
+}
+
+func (sc *sessionControls) handleCompactKey(key string) (string, bool) {
+	switch key {
+	case "up", "shift+tab", "down", "tab":
+		if sc.cursor == 0 {
+			sc.cursor = 1
+		} else {
+			sc.cursor = 0
+		}
+	case "enter", " ":
+		if sc.cursor == 0 {
+			sc.completedMsg = "Conversation marked for compaction."
+			return "compact", true
+		}
+		sc.action = ""
+		sc.cursor = 0
+	case "esc":
+		sc.action = ""
+		sc.cursor = 0
+	}
 	return "", false
 }
 

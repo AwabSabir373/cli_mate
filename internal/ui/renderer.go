@@ -1,33 +1,32 @@
 package ui
 
-import "github.com/charmbracelet/glamour"
-
+// Renderer wraps the custom markdown renderer to replace the glamour dependency.
+// glamour v1.0.0 pulls in cellbuf v0.0.13 which conflicts with the newer
+// ansi/cellbuf versions required by charm.land/bubbletea/v2. The custom
+// markdownRenderer in assistant_markdown.go handles all rendering.
 type Renderer struct {
-	renderer *glamour.TermRenderer
+	width  int
+	styles appStyles
 }
 
 func NewRenderer(width int) (*Renderer, error) {
 	if width < 20 {
 		width = 20
 	}
+	return &Renderer{width: width}, nil
+}
 
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(width),
-	)
-	if err != nil {
-		return nil, err
+// SetStyles updates the styles used by the renderer. Called after theme changes.
+func (r *Renderer) SetStyles(styles appStyles) {
+	if r != nil {
+		r.styles = styles
 	}
-	return &Renderer{renderer: renderer}, nil
 }
 
 func (r *Renderer) Render(markdown string) string {
-	if r == nil || r.renderer == nil {
+	if r == nil {
 		return markdown
 	}
-	out, err := r.renderer.Render(markdown)
-	if err != nil {
-		return markdown
-	}
-	return out
+	renderer := newMarkdownRenderer(r.width, r.styles)
+	return renderer.render(markdown)
 }

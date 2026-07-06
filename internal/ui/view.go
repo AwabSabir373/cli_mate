@@ -5,98 +5,83 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
-func (a App) View() string {
+func (a App) View() tea.View {
 	if a.err != nil {
-		return a.styles.error.Render(a.err.Error()) + "\n"
+		return tea.View{Content: a.styles.error.Render(a.err.Error()) + "\n"}
 	}
 
 	// Overlay views take full screen (priority ordering)
+	wrap := func(s string) tea.View {
+		return tea.View{Content: s, AltScreen: true, MouseMode: tea.MouseModeCellMotion}
+	}
 	if a.onboarding != nil && a.onboarding.isActive() {
-		overlay := a.renderOverlay(a.onboarding, a.width)
-		if overlay != "" {
-			return overlay
+		if o := a.renderOverlay(a.onboarding, a.width); o != "" {
+			return wrap(o)
 		}
 	}
-
 	if a.sessionPicker != nil && a.sessionPicker.isVisible() {
-		overlay := a.renderSessionPickerOverlay(a.width)
-		if overlay != "" {
-			return overlay
+		if o := a.renderSessionPickerOverlay(a.width); o != "" {
+			return wrap(o)
 		}
 	}
-
 	if a.mcpManager != nil && a.mcpManager.isVisible() {
-		overlay := a.renderMCPOverlay(a.width)
-		if overlay != "" {
-			return overlay
+		if o := a.renderMCPOverlay(a.width); o != "" {
+			return wrap(o)
 		}
 	}
-
 	if a.specMode != nil && a.specMode.isVisible() {
-		overlay := renderSpecMode(a.specMode, a.styles, a.width)
-		if overlay != "" {
-			return overlay
+		if o := renderSpecMode(a.specMode, a.styles, a.width); o != "" {
+			return wrap(o)
 		}
 	}
-
 	if a.subchatManager != nil && a.subchatManager.isActive() {
-		overlay := renderSubchat(a.subchatManager, a.styles, a.width)
-		if overlay != "" {
-			return overlay
+		if o := renderSubchat(a.subchatManager, a.styles, a.width); o != "" {
+			return wrap(o)
 		}
 	}
-
 	if a.prStatus != nil && a.prStatus.isVisible() {
-		overlay := renderPRStatus(a.prStatus, a.styles, a.width)
-		if overlay != "" {
-			return overlay
+		if o := renderPRStatus(a.prStatus, a.styles, a.width); o != "" {
+			return wrap(o)
 		}
 	}
-
-	// Additional overlay components
 	if a.startup != nil && a.startup.isVisible() {
-		overlay := renderStartup(a.startup, a.styles, a.width)
-		if overlay != "" {
-			return overlay
+		if o := renderStartup(a.startup, a.styles, a.width); o != "" {
+			return wrap(o)
 		}
 	}
-
 	if a.sessionCtrls != nil && a.sessionCtrls.isVisible() {
-		overlay := renderSessionControls(a.sessionCtrls, a.styles, a.width, a.messages)
-		if overlay != "" {
-			return overlay
+		if o := renderSessionControls(a.sessionCtrls, a.styles, a.width, a.messages); o != "" {
+			return wrap(o)
 		}
 	}
-
 	if a.commandOutput != nil && a.commandOutput.isVisible() {
-		overlay := renderCommandOutput(a.commandOutput, a.styles, a.width)
-		if overlay != "" {
-			return overlay
+		if o := renderCommandOutput(a.commandOutput, a.styles, a.width); o != "" {
+			return wrap(o)
 		}
 	}
-
 	if a.doctor != nil && a.doctor.isVisible() {
-		overlay := renderDoctorView(a.doctor, a.styles, a.width)
-		if overlay != "" {
-			return overlay
+		if o := renderDoctorView(a.doctor, a.styles, a.width); o != "" {
+			return wrap(o)
 		}
 	}
-
 	if a.imageAttach != nil && a.imageAttach.isVisible() {
-		overlay := renderImageAttachments(a.imageAttach, a.styles, a.width)
-		if overlay != "" {
-			return overlay
+		if o := renderImageAttachments(a.imageAttach, a.styles, a.width); o != "" {
+			return wrap(o)
+		}
+	}
+	if a.picker != nil && a.picker.isVisible() {
+		if o := renderPicker(a.picker, a.styles, a.width); o != "" {
+			return wrap(o)
 		}
 	}
 
-	if a.picker != nil && a.picker.isVisible() {
-		overlay := renderPicker(a.picker, a.styles, a.width)
-		if overlay != "" {
-			return overlay
-		}
+	// Detailed transcript overlay
+	if a.transcriptDetailed {
+		return wrap(a.detailedTranscriptView())
 	}
 
 	layout := computeLayout(a.width, a.sidebar != nil && a.sidebar.hasContent(), a.planPanel != nil && a.planPanel.IsVisible())
@@ -104,22 +89,18 @@ func (a App) View() string {
 	header := a.renderHeader(layout)
 
 	if a.inputMode == "" && len(a.messages) == 0 && !a.loading {
-		return a.renderSetup(header)
+		return tea.View{Content: a.renderSetup(header)}
 	}
 
 	var b strings.Builder
 
-	// Build main chat column
-	chatContent := a.renderChatContent(layout)
-
-	// Sidebar
 	sidebarContent := ""
 	if layout.ShowSidebar && a.sidebar != nil && a.sidebar.IsVisible() {
 		sidebarContent = a.sidebar.Render(layout.SidebarWidth, a.height-6, a.styles)
 	}
 
 	if sidebarContent != "" {
-		// Two-column layout
+		chatContent := a.renderChatColumn(header, layout)
 		b.WriteString(a.styles.panel.Width(a.width - 4).Render(
 			lipgloss.JoinHorizontal(lipgloss.Top,
 				chatContent,
@@ -128,15 +109,14 @@ func (a App) View() string {
 			),
 		))
 	} else {
-		// Single column
 		b.WriteString(a.renderPanelContent(header, layout))
 	}
 
-	return b.String()
+	return wrap(b.String())
 }
 
 func stylesVerticalDivider(styles appStyles) string {
-	return styles.muted.Render(" ┃ ")
+	return styles.muted.Render(" | ")
 }
 
 func (a App) renderPanelContent(header string, layout layoutConfig) string {
@@ -146,13 +126,13 @@ func (a App) renderPanelContent(header string, layout layoutConfig) string {
 
 	// Chat transcript
 	if len(a.messages) > 0 || len(a.log) > 0 {
-		b.WriteString(a.console())
+		b.WriteString(a.consoleFor(layout.ChatWidth, layout.ConsoleLines))
 		b.WriteString("\n")
 	}
 
 	// Suggestions
 	if len(a.currentSuggestions()) > 0 {
-		b.WriteString(a.renderSuggestions())
+		b.WriteString(a.renderSuggestionsFor(layout.ChatWidth))
 		b.WriteString("\n")
 	}
 
@@ -165,7 +145,7 @@ func (a App) renderPanelContent(header string, layout layoutConfig) string {
 	b.WriteString(a.renderActivityStrip(layout.ChatWidth))
 
 	// Input prompt
-	b.WriteString(a.renderPrompt())
+	b.WriteString(a.renderPromptFor(layout.ChatWidth))
 
 	return a.styles.panel.Width(a.width - 4).Render(b.String())
 }
@@ -174,9 +154,9 @@ func (a App) renderHeader(layout layoutConfig) string {
 	logo := a.styles.logo.Render("cli_mate")
 	bits := []string{logo}
 
-	profile, err := a.cfg.Active()
-	if err == nil {
-		if layout.ShowHeaderPills {
+	if a.cfg != nil && layout.ShowHeaderPills {
+		profile, err := a.cfg.Active()
+		if err == nil {
 			if profile.Provider != "" {
 				bits = append(bits, a.styles.pill.Render(profile.Provider))
 			}
@@ -252,6 +232,9 @@ func (a App) renderSetup(header string) string {
 }
 
 func (a App) renderWorkspacePills() string {
+	if a.cfg == nil {
+		return ""
+	}
 	profile, err := a.cfg.Active()
 	if err != nil {
 		return ""
@@ -277,13 +260,13 @@ func (a App) renderChatContent(layout layoutConfig) string {
 
 	// Show transcript messages
 	if len(a.messages) > 0 || len(a.log) > 0 {
-		b.WriteString(a.console())
+		b.WriteString(a.consoleFor(renderWidth, layout.ConsoleLines))
 		b.WriteString("\n")
 	}
 
 	// Suggestions
 	if len(a.currentSuggestions()) > 0 {
-		b.WriteString(a.renderSuggestions())
+		b.WriteString(a.renderSuggestionsFor(renderWidth))
 		b.WriteString("\n")
 	}
 
@@ -296,9 +279,17 @@ func (a App) renderChatContent(layout layoutConfig) string {
 	b.WriteString(a.renderActivityStrip(renderWidth))
 
 	// Input prompt
-	b.WriteString(a.renderPrompt())
+	b.WriteString(a.renderPromptFor(renderWidth))
 
 	return b.String()
+}
+
+func (a App) renderChatColumn(header string, layout layoutConfig) string {
+	var b strings.Builder
+	b.WriteString(header)
+	b.WriteString("\n\n")
+	b.WriteString(a.renderChatContent(layout))
+	return lipgloss.NewStyle().Width(max(40, layout.ChatWidth)).Render(b.String())
 }
 
 func (a App) renderActivityStrip(width int) string {
@@ -327,6 +318,10 @@ func (a App) renderActivityStrip(width int) string {
 }
 
 func (a App) console() string {
+	return a.consoleFor(a.width-8, 12)
+}
+
+func (a App) consoleFor(width int, visibleLines int) string {
 	entries := a.log
 
 	if len(entries) == 0 {
@@ -335,7 +330,12 @@ func (a App) console() string {
 
 	// Use viewport for scroll management
 	vp := a.viewport
-	visibleLines := 12
+	if vp == nil {
+		vp = newViewport()
+	}
+	if visibleLines <= 0 {
+		visibleLines = 12
+	}
 	vp.setVisibleLines(visibleLines)
 	vp.setTotalLines(len(entries))
 
@@ -348,7 +348,7 @@ func (a App) console() string {
 		b.WriteString(a.styles.scrollHint.Render(fmt.Sprintf("... %d older entries ...\n", start)))
 	}
 
-	renderWidth := max(40, a.width-8)
+	renderWidth := max(32, width-4)
 
 	for i, entry := range visible {
 		ts := entry.Time.Format("15:04:05")
@@ -411,7 +411,7 @@ func (a App) console() string {
 
 	// Show scroll-to-bottom hint when scrolled up during active streaming
 	if !vp.isAtBottom() && (a.loading || a.streamBuffer != "") {
-		b.WriteString(a.styles.accent.Render("  ▼ jump to latest "))
+		b.WriteString(a.styles.accent.Render("  jump to latest "))
 		b.WriteString(a.styles.muted.Render("(scroll down)"))
 		b.WriteString("\n")
 	}
@@ -426,10 +426,11 @@ func (a App) renderToolEntry(entry logEntry, width int) string {
 	}
 
 	req := toolBodyRequest{
-		name:   parseToolName(entry.Text),
-		arg:    parseToolArg(entry.Text),
-		detail: entry.Text,
-		path:   parseToolPath(entry.Text),
+		name:     parseToolName(entry.Text),
+		arg:      parseToolArg(entry.Text),
+		detail:   entry.Text,
+		path:     parseToolPath(entry.Text),
+		argsJSON: parseToolArgsJSON(parseToolArg(entry.Text)),
 	}
 
 	// Skip hidden plumbing tools
@@ -484,19 +485,32 @@ func parseToolPath(text string) string {
 }
 
 func (a App) renderPrompt() string {
-	return a.styles.inputPanel.Width(a.promptWidth()).Render(a.renderPromptContent())
+	return a.renderPromptFor(a.width - 4)
+}
+
+func (a App) renderPromptFor(width int) string {
+	promptWidth := a.promptWidthFor(width)
+	return a.styles.inputPanel.Width(promptWidth).Render(a.renderPromptContent(promptWidth))
 }
 
 func (a App) promptWidth() int {
-	width := a.width - 12
+	return a.promptWidthFor(a.width - 4)
+}
+
+func (a App) promptWidthFor(width int) int {
+	width = width - 6
 	if width < 32 {
 		return 32
 	}
 	return width
 }
 
-func (a App) renderPromptContent() string {
-	emptyHint := a.styles.muted.Render("Describe changes, mention @files, or type /")
+func (a App) renderPromptContent(width int) string {
+	emptyHint := "Describe changes, mention @files, or type /"
+	if width < 58 {
+		emptyHint = "Message, @file, or /command"
+	}
+	emptyHint = a.styles.muted.Render(emptyHint)
 	cursor := a.styles.cursor.Render("█")
 
 	switch a.inputMode {
@@ -514,7 +528,7 @@ func (a App) renderPromptContent() string {
 		return a.renderFinder()
 	case "ask_user":
 		if a.askUserState != nil {
-			return a.askUserState.render(a.styles, a.promptWidth())
+			return a.askUserState.render(a.styles, width)
 		}
 		return ""
 	default:
@@ -541,7 +555,7 @@ func (a App) renderPromptContent() string {
 		for i, line := range lines {
 			prefix := a.styles.prompt.Render(">>> ")
 			if i > 0 {
-				prefix = a.styles.prompt.Render(" · ")
+				prefix = a.styles.prompt.Render("... ")
 			}
 			if cursorLine == -1 && cursorLocal <= len(line) {
 				cursorLine = i
@@ -560,7 +574,7 @@ func (a App) renderPromptContent() string {
 			}
 		}
 		if cursorLine == -1 {
-			b.WriteString(a.styles.prompt.Render(" · "))
+			b.WriteString(a.styles.prompt.Render("... "))
 			b.WriteString(cursor)
 		}
 		return b.String()
@@ -568,6 +582,10 @@ func (a App) renderPromptContent() string {
 }
 
 func (a App) renderSuggestions() string {
+	return a.renderSuggestionsFor(a.width - 4)
+}
+
+func (a App) renderSuggestionsFor(width int) string {
 	items := a.currentSuggestions()
 	if len(items) == 0 {
 		return ""
@@ -575,10 +593,24 @@ func (a App) renderSuggestions() string {
 
 	var b strings.Builder
 	for i, item := range items {
+		prefix := "  "
 		if i == a.selected {
-			b.WriteString(a.styles.selected.Render(item.Label))
+			prefix = "> "
+		}
+
+		labelWidth := clamp(width/2, 14, 32)
+		descWidth := max(10, width-labelWidth-8)
+		label := truncateString(item.Label, labelWidth)
+		desc := truncateString(item.Description, descWidth)
+		if desc == "" {
+			desc = "command"
+		}
+		line := fmt.Sprintf("%s%-*s  %s", prefix, labelWidth, label, desc)
+
+		if i == a.selected {
+			b.WriteString(a.styles.selected.Render(line))
 		} else {
-			b.WriteString(a.styles.muted.Render(item.Label))
+			b.WriteString(a.styles.muted.Render(line))
 		}
 		b.WriteString("\n")
 	}
@@ -609,7 +641,13 @@ func (a App) loadingText() string {
 
 	b.WriteString(a.styles.spinner.Render(spinner))
 	b.WriteString(" ")
-	b.WriteString(a.styles.accent.Render(currentStep))
+	if a.streamBuffer != "" && !a.reducedMotion {
+		palette := ripplePalette()
+		rippled := rippleText(currentStep, palette, a.loadingFrame, 8)
+		b.WriteString(rippled)
+	} else {
+		b.WriteString(a.styles.accent.Render(currentStep))
+	}
 
 	if a.streamBuffer != "" {
 		preview := truncateStreamPreview(a.streamBuffer, 80)

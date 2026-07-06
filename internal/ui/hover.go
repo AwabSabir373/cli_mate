@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // hoverKind identifies the type of element under the mouse cursor.
@@ -42,14 +42,15 @@ func newHoverManager() *hoverManager {
 
 // isMouseHover returns true if the message is a mouse motion (not a click).
 func isMouseHover(msg tea.MouseMsg) bool {
-	return msg.Button == tea.MouseButtonNone
+	_, isClick := msg.(tea.MouseClickMsg)
+	_, isWheel := msg.(tea.MouseWheelMsg)
+	return !isClick && !isWheel
 }
 
 // isMouseClick returns true if the message is a mouse click.
 func isMouseClick(msg tea.MouseMsg) bool {
-	return msg.Button != tea.MouseButtonNone &&
-		msg.Button != tea.MouseButtonWheelUp &&
-		msg.Button != tea.MouseButtonWheelDown
+	_, isClick := msg.(tea.MouseClickMsg)
+	return isClick
 }
 
 // updateHover updates the hover target based on current mouse position.

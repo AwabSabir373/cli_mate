@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"cli_mate/internal/agent"
 	"cli_mate/internal/config"
@@ -89,6 +89,8 @@ func (a *App) startChat(text string) tea.Cmd {
 		profile = a.connected
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	a.beginRun(cancel)
 	a.loading = true
 	a.loadingFrame = 0
 	a.loadingSteps = loadingSteps(text, profile, a.workspaceName)
@@ -100,13 +102,16 @@ func (a *App) startChat(text string) tea.Cmd {
 
 	c := make(chan tea.Msg, 64)
 	app := *a
-	go runChatAsync(context.Background(), &app, profile, provider, history, text, workspaceRoot, instructions, mcpConfigs, c)
+	go runChatAsync(ctx, &app, profile, provider, history, text, workspaceRoot, instructions, mcpConfigs, c)
 	return tea.Batch(waitForChatMsg(c), loadingTick())
 }
 
-func runChatAsync(parent context.Context, app *App, profile config.Profile, provider providers.Provider, history []providers.Message, text string, workspaceRoot string, instructions string, mcpConfigs []config.MCPConfig, c chan tea.Msg) {
-	ctx, cancel := context.WithCancel(parent)
-	defer cancel()
+func runChatAsync(ctx context.Context, app *App, profile config.Profile, provider providers.Provider, history []providers.Message, text string, workspaceRoot string, instructions string, mcpConfigs []config.MCPConfig, c chan tea.Msg) {
+	defer func() {
+		if r := recover(); r != nil {
+			c <- chatDoneMsg{messages: history, err: fmt.Errorf("chat panic: %v", r)}
+		}
+	}()
 	activity := make(chan struct{}, 1)
 	done := make(chan struct{})
 	defer close(done)
@@ -131,14 +136,14 @@ func runChatAsync(parent context.Context, app *App, profile config.Profile, prov
 				select {
 				case c <- msg:
 				case <-done:
-				case <-parent.Done():
+				case <-ctx.Done():
 				default:
 				}
 				waited += chatIdleNotice
 				timer.Reset(chatIdleNotice)
 			case <-done:
 				return
-			case <-parent.Done():
+			case <-ctx.Done():
 				return
 			}
 		}
@@ -265,11 +270,11 @@ func runChatAsync(parent context.Context, app *App, profile config.Profile, prov
 			c <- chatStepMsg{entry: entry, c: c}
 			c <- chatLoadingStepMsg{text: step.Text, c: c}
 
-			// Send tool call message for streaming UI
+			// Send tool result message for streaming UI
 			if step.Kind == "tool" {
 				toolName := parseToolName(step.Text)
 				if toolName != "" && isFileWritingTool(toolName) {
-					c <- chatToolCallMsg{toolName: toolName, args: step.Text, c: c}
+					c <- chatToolResultMsg{toolName: toolName, result: step.Text, c: c}
 				}
 			}
 		},

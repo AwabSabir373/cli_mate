@@ -193,18 +193,19 @@ func (os *onboardingState) handleBaseURLKey(key string) (bool, string) {
 }
 
 func (os *onboardingState) handleModelKey(key string) (bool, string) {
+	models := os.modelChoices()
 	switch key {
 	case "up", "shift+tab":
 		if os.cursor > 0 {
 			os.cursor--
 		}
 	case "down", "tab":
-		if os.cursor < len(os.models)-1 {
+		if os.cursor < len(models)-1 {
 			os.cursor++
 		}
 	case "enter", " ":
-		if os.cursor >= 0 && os.cursor < len(os.models) {
-			os.model = os.models[os.cursor]
+		if os.cursor >= 0 && os.cursor < len(models) {
+			os.model = models[os.cursor]
 			os.stage = setupStageReview
 			os.cursor = 0
 		}
@@ -255,6 +256,9 @@ func (os *onboardingState) handleReviewKey(key string) (bool, string) {
 
 // applyConfig applies the onboarding configuration to the app's config.
 func (os *onboardingState) applyConfig(a *App) {
+	if a == nil || a.cfg == nil {
+		return
+	}
 	_ = a.cfg.UpdateActive(func(profile *config.Profile) {
 		profile.Provider = os.provider
 		if os.apiKey != "" {
@@ -368,14 +372,7 @@ func (os *onboardingState) renderAPIKey(styles appStyles, _ int) string {
 	b.WriteString(styles.muted.Render(fmt.Sprintf("Enter your %s API key:", os.provider)))
 	b.WriteString("\n\n")
 
-	masked := ""
-	if os.apiKey != "" {
-		if len(os.apiKey) > 8 {
-			masked = os.apiKey[:4] + strings.Repeat("*", len(os.apiKey)-8) + os.apiKey[len(os.apiKey)-4:]
-		} else {
-			masked = strings.Repeat("*", len(os.apiKey))
-		}
-	}
+	masked := maskSecret(os.apiKey)
 
 	b.WriteString(styles.prompt.Render("  API Key: "))
 	b.WriteString(styles.input.Render(masked))
@@ -427,11 +424,7 @@ func (os *onboardingState) renderModel(styles appStyles, _ int) string {
 	b.WriteString(styles.muted.Render("Select a model:"))
 	b.WriteString("\n\n")
 
-	models := os.models
-	if len(models) == 0 {
-		// Fallback models if registry doesn't provide any
-		models = []string{"gpt-4.1-mini", "gpt-4.1", "gpt-4o", "claude-sonnet-4-20250514", "gemini-2.5-flash"}
-	}
+	models := os.modelChoices()
 
 	for i, model := range models {
 		if i == os.cursor {
@@ -463,9 +456,8 @@ func (os *onboardingState) renderReview(styles appStyles, _ int) string {
 	b.WriteString("\n")
 
 	if os.apiKey != "" {
-		masked := os.apiKey[:4] + strings.Repeat("*", len(os.apiKey)-8) + os.apiKey[len(os.apiKey)-4:]
 		b.WriteString(styles.accent.Render("  API Key:"))
-		b.WriteString(fmt.Sprintf("  %s", masked))
+		b.WriteString(fmt.Sprintf("  %s", maskSecret(os.apiKey)))
 		b.WriteString("\n")
 	}
 
@@ -514,6 +506,24 @@ func (os *onboardingState) renderComplete(styles appStyles, _ int) string {
 // isComplete returns true if the onboarding wizard has finished.
 func (os *onboardingState) isComplete() bool {
 	return os.stage == setupStageComplete
+}
+
+func (os *onboardingState) modelChoices() []string {
+	if len(os.models) > 0 {
+		return os.models
+	}
+	return []string{"gpt-4.1-mini", "gpt-4.1", "gpt-4o", "claude-sonnet-4-20250514", "gemini-2.5-flash"}
+}
+
+func maskSecret(secret string) string {
+	switch {
+	case secret == "":
+		return ""
+	case len(secret) <= 8:
+		return strings.Repeat("*", len(secret))
+	default:
+		return secret[:4] + strings.Repeat("*", len(secret)-8) + secret[len(secret)-4:]
+	}
 }
 
 // reset clears the onboarding state.

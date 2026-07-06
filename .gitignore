@@ -30,10 +30,37 @@ Thumbs.db
 # OpenClaude
 .openclaude/
 
+# Serena
+.serena/
+
+# Continue
+.continue/
+
 # Go
+go-build/
+bin/
 vendor/
 dist/
+*.o
+*.a
+*.out
 
 # Test
 coverage.out
 coverage.html
+
+# Tools
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Node
+node_modules/
+

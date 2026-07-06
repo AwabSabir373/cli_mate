@@ -232,8 +232,8 @@ func (cc *commandCenter) handleKey(key string) string {
 		}
 		return ""
 	default:
-		if len(key) == 1 {
-			cc.query += key
+		if text, ok := keyText(key); ok {
+			cc.query += text
 			cc.filter(cc.query)
 		}
 		return ""

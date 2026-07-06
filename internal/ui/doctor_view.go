@@ -2,12 +2,13 @@ package ui
 
 import (
 	"fmt"
+	"image/color"
 	"os"
 	"runtime"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"cli_mate/internal/config"
 	"cli_mate/internal/providers/registry"
@@ -276,7 +277,7 @@ func statusIcon(status checkStatus) string {
 }
 
 // statusColor returns a lipgloss color for the check status.
-func statusColor(status checkStatus) lipgloss.Color {
+func statusColor(status checkStatus) color.Color {
 	switch status {
 	case checkPass:
 		return lipgloss.Color("42") // green

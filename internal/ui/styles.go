@@ -1,19 +1,23 @@
 package ui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"image/color"
+
+	"charm.land/lipgloss/v2"
+)
 
 type themeColors struct {
-	bg        lipgloss.Color
-	fg        lipgloss.Color
-	accent    lipgloss.Color
-	muted     lipgloss.Color
-	panel     lipgloss.Color
-	softPanel lipgloss.Color
-	pill      lipgloss.Color
-	selected  lipgloss.Color
-	error     lipgloss.Color
-	success   lipgloss.Color
-	border    lipgloss.Color
+	bg        color.Color
+	fg        color.Color
+	accent    color.Color
+	muted     color.Color
+	panel     color.Color
+	softPanel color.Color
+	pill      color.Color
+	selected  color.Color
+	error     color.Color
+	success   color.Color
+	border    color.Color
 }
 
 var themes = map[string]themeColors{

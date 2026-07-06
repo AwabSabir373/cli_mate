@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 
 	"cli_mate/internal/config"
@@ -60,7 +60,7 @@ func newRootCommand() *cobra.Command {
 			}
 
 			app := ui.NewApp(cfg, store)
-			program := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
+			program := tea.NewProgram(app)
 			app.SetProgram(program)
 			_, err = program.Run()
 			return err

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // cardBody represents the rendered body of a tool card.
@@ -126,7 +126,7 @@ func renderDiffToolBody(req toolBodyRequest) cardBody {
 		path = req.path
 	}
 	body := cardBody{
-		header: fmt.Sprintf("✎ %s", path),
+		header: fmt.Sprintf("edit %s", fallback(path, req.name)),
 	}
 
 	// Check if content looks like a diff
@@ -141,15 +141,15 @@ func renderDiffToolBody(req toolBodyRequest) cardBody {
 			break
 		}
 		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
-			contentLines = append(contentLines, lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("┃ "+line))
+			contentLines = append(contentLines, lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("| "+line))
 			added++
 		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
-			contentLines = append(contentLines, lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("┃ "+line))
+			contentLines = append(contentLines, lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("| "+line))
 			removed++
 		} else if strings.HasPrefix(line, "@@") {
-			contentLines = append(contentLines, lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render("┃ "+line))
+			contentLines = append(contentLines, lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render("| "+line))
 		} else if strings.HasPrefix(line, " ") {
-			contentLines = append(contentLines, "┃ "+line)
+			contentLines = append(contentLines, "| "+line)
 		} else if strings.TrimSpace(line) != "" {
 			contentLines = append(contentLines, "  "+line)
 		}
@@ -175,7 +175,7 @@ func renderExploreToolBody(req toolBodyRequest) cardBody {
 		path = req.path
 	}
 	body := cardBody{
-		header: fmt.Sprintf("📄 %s", path),
+		header: fmt.Sprintf("read %s", fallback(path, req.name)),
 	}
 
 	detail := req.detail
@@ -235,7 +235,7 @@ func renderBashToolBody(req toolBodyRequest) cardBody {
 // renderWebToolBody renders a card for web search/fetch results.
 func renderWebToolBody(req toolBodyRequest) cardBody {
 	body := cardBody{
-		header: fmt.Sprintf("🌐 %s", req.name),
+		header: fmt.Sprintf("web %s", req.name),
 	}
 
 	detail := req.detail
@@ -267,7 +267,7 @@ func renderPlanSummaryToolBody(req toolBodyRequest) cardBody {
 	}
 
 	return cardBody{
-		header:  fmt.Sprintf("📋 %s", req.name),
+		header:  fmt.Sprintf("plan %s", req.name),
 		content: detail,
 	}
 }
@@ -275,7 +275,7 @@ func renderPlanSummaryToolBody(req toolBodyRequest) cardBody {
 // renderHiddenToolBody renders minimal output for hidden plumbing tools.
 func renderHiddenToolBody(req toolBodyRequest) cardBody {
 	return cardBody{
-		header:  fmt.Sprintf("⚙ %s", req.name),
+		header:  fmt.Sprintf("system %s", req.name),
 		content: "",
 	}
 }
@@ -283,7 +283,7 @@ func renderHiddenToolBody(req toolBodyRequest) cardBody {
 // renderFallbackToolBody renders a generic card for unregistered tools.
 func renderFallbackToolBody(req toolBodyRequest) cardBody {
 	body := cardBody{
-		header: fmt.Sprintf("🔧 %s", req.name),
+		header: fmt.Sprintf("tool %s", fallback(req.name, "call")),
 	}
 
 	detail := req.detail
@@ -323,7 +323,7 @@ func (r *toolBodyRegistry) renderCard(req toolBodyRequest, styles appStyles, wid
 	// Content
 	if body.content != "" {
 		cardContent := styles.softPanel.
-			Width(width - 8).
+			Width(max(20, width-8)).
 			Render(body.content)
 		b.WriteString(cardContent)
 		b.WriteString("\n")
@@ -333,11 +333,9 @@ func (r *toolBodyRegistry) renderCard(req toolBodyRequest, styles appStyles, wid
 	if body.footer != "" {
 		diffStr := ""
 		if body.diffAdd > 0 || body.diffDel > 0 {
-			diffStr = fmt.Sprintf("  %s+%d %s-%d",
-				styles.diffAdd.Render(""),
-				body.diffAdd,
-				styles.diffRemove.Render(""),
-				body.diffDel,
+			diffStr = fmt.Sprintf("  %s %s",
+				styles.diffAdd.Render(fmt.Sprintf("+%d", body.diffAdd)),
+				styles.diffRemove.Render(fmt.Sprintf("-%d", body.diffDel)),
 			)
 		}
 		footer := styles.muted.Render(body.footer + diffStr)

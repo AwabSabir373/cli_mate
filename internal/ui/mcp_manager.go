@@ -70,7 +70,7 @@ func (mm *mcpManager) UpdateToolCount(serverName string, count int) {
 // loadFromConfig loads MCP servers from the config.
 func (mm *mcpManager) loadFromConfig(cfg *config.Config) {
 	if cfg != nil {
-		mm.servers = cfg.MCP
+		mm.servers = append([]config.MCPConfig(nil), cfg.MCP...)
 	} else {
 		mm.servers = nil
 	}
@@ -164,6 +164,7 @@ func (mm *mcpManager) handleListKey(key string) (bool, string) {
 			if mm.cursor >= len(mm.servers) {
 				mm.cursor = len(mm.servers) - 1
 			}
+			return true, "delete"
 		}
 	}
 	return false, ""
@@ -174,6 +175,10 @@ func (mm *mcpManager) handleAddNameKey(key string) (bool, string) {
 	case "esc":
 		mm.stage = mcpStageList
 		mm.cursor = 0
+	case "backspace":
+		if len(mm.editEntry.name) > 0 {
+			mm.editEntry.name = mm.editEntry.name[:len(mm.editEntry.name)-1]
+		}
 	default:
 		if key == "enter" {
 			if mm.editEntry.name == "" {
@@ -182,6 +187,8 @@ func (mm *mcpManager) handleAddNameKey(key string) (bool, string) {
 			}
 			mm.stage = mcpStageAddCommand
 			mm.err = ""
+		} else if text, ok := keyText(key); ok {
+			mm.editEntry.name += text
 		}
 	}
 	return false, ""
@@ -191,6 +198,10 @@ func (mm *mcpManager) handleAddCommandKey(key string) (bool, string) {
 	switch key {
 	case "esc":
 		mm.stage = mcpStageAddName
+	case "backspace":
+		if len(mm.editEntry.command) > 0 {
+			mm.editEntry.command = mm.editEntry.command[:len(mm.editEntry.command)-1]
+		}
 	default:
 		if key == "enter" {
 			if mm.editEntry.command == "" {
@@ -199,6 +210,8 @@ func (mm *mcpManager) handleAddCommandKey(key string) (bool, string) {
 			}
 			mm.stage = mcpStageAddArgs
 			mm.err = ""
+		} else if text, ok := keyText(key); ok {
+			mm.editEntry.command += text
 		}
 	}
 	return false, ""
@@ -208,10 +221,16 @@ func (mm *mcpManager) handleAddArgsKey(key string) (bool, string) {
 	switch key {
 	case "esc":
 		mm.stage = mcpStageAddCommand
+	case "backspace":
+		if len(mm.editEntry.args) > 0 {
+			mm.editEntry.args = mm.editEntry.args[:len(mm.editEntry.args)-1]
+		}
 	default:
 		if key == "enter" {
 			mm.stage = mcpStageAddEnv
 			mm.cursor = 0
+		} else if text, ok := keyText(key); ok {
+			mm.editEntry.args += text
 		}
 	}
 	return false, ""

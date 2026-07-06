@@ -1,7 +1,7 @@
 package ui
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // MouseZone identifies a clickable region in the UI.
@@ -24,18 +24,17 @@ type MouseEvent struct {
 
 // HandleMouse processes a mouse message and performs the corresponding action.
 func (a *App) HandleMouse(msg tea.MouseMsg) {
-	x, y := msg.X, msg.Y
-	zone := a.mouseHitTest(x, y)
-
-	switch msg.Type {
-	case tea.MouseWheelUp:
+	switch m := msg.(type) {
+	case tea.MouseWheelMsg:
+		mouse := m.Mouse()
+		zone := a.mouseHitTest(mouse.X, mouse.Y)
 		if zone == MZoneLog {
 			a.scrollUp()
 		}
-	case tea.MouseWheelDown:
-		if zone == MZoneLog {
-			a.scrollDown()
-		}
+	case tea.MouseClickMsg:
+		mouse := m.Mouse()
+		zone := a.mouseHitTest(mouse.X, mouse.Y)
+		_ = zone
 	}
 }
 

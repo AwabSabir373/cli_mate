@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"image/color"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -9,7 +10,6 @@ import (
 	"github.com/alecthomas/chroma/v2/formatters"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
-	"github.com/charmbracelet/lipgloss"
 )
 
 var (
@@ -82,7 +82,7 @@ func highlightCode(code string, lang string) string {
 
 // highlightCodeWithTheme syntax-highlights code using terminal theme-aware colors.
 // Falls back to the simple version if custom theming isn't available.
-func highlightCodeWithTheme(code string, lang string, _ lipgloss.Color, _ lipgloss.Color) string {
+func highlightCodeWithTheme(code string, lang string, _ color.Color, _ color.Color) string {
 	if code == "" {
 		return ""
 	}

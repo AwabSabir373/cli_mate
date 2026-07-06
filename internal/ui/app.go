@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/google/uuid"
 
 	"cli_mate/internal/agent"
@@ -19,6 +19,18 @@ import (
 	"cli_mate/internal/tools"
 	"cli_mate/internal/usercommands"
 )
+
+// noColorRequested checks the NO_COLOR environment variable per the
+// no-color.org spec: any non-empty value disables color. This is stricter than
+// strconv.ParseBool, which would pass NO_COLOR=yes or NO_COLOR=foo.
+func noColorRequested() bool {
+	return os.Getenv("NO_COLOR") != ""
+}
+
+// noColorRequestedByFunc is the testable version of noColorRequested.
+func noColorRequestedByFunc(getenv func(string) string) bool {
+	return getenv("NO_COLOR") != ""
+}
 
 type logEntry struct {
 	Kind         string
@@ -36,6 +48,21 @@ type suggestion struct {
 
 type loadingTickMsg struct{}
 type syncTickMsg struct{}
+
+type exitConfirmExpiredMsg struct {
+	seq int
+}
+
+type cancelConfirmExpiredMsg struct {
+	seq int
+}
+
+const ctrlCExitConfirmDuration = 3 * time.Second
+const ctrlCExitConfirmText = "Press Ctrl+C again to exit"
+
+const escCancelConfirmDuration = 3 * time.Second
+const escCancelConfirmText = "Press Esc again to cancel"
+
 type filesSyncedMsg []string
 type chatStreamMsg struct {
 	token string
@@ -140,6 +167,26 @@ type App struct {
 	composer      *composerState
 	sessionPicker *sessionPicker
 	mcpManager    *mcpManager
+	// Animation state (ported from zero model.go)
+	spinnerTicking bool
+	reducedMotion  bool
+
+	// Run management (ported from zero model.go)
+	pending             bool
+	runCancel           context.CancelFunc
+	runID               int
+	activeRunID         int
+	exiting             bool
+	turnStartedAt       time.Time
+	exitConfirmActive   bool
+	exitConfirmSeq      int
+	cancelConfirmActive bool
+	cancelConfirmSeq    int
+	flushRunIDs         map[int]string
+
+	// Transcript body height cache for optimized rendering
+	transcriptBodyHeights *transcriptBodyHeightCache
+
 	// Additional feature components
 	transcriptSelection *transcriptSelection
 	prStatus            *PRDisplay
@@ -154,6 +201,23 @@ type App struct {
 	startup       *startupState
 	imageAttach   *imageAttachState
 	doctor        *doctorView
+
+	// Theme system fields (ported from zero)
+	hasDarkBg     bool
+	themeMode     themeMode
+	queuedMessage string
+
+	// Detailed transcript mode
+	transcriptDetailed bool
+
+	// Git sweep state for detecting files modified outside tool pipeline
+	gitSweepInFlight    bool
+	gitSweepUnavailable bool
+	gitFileBaseline     map[string]bool
+	gitTouched          []gitSweepFile
+
+	// File viewer state
+	fileView fileViewState
 }
 
 // SetProgram wires the Bubble Tea program back into the app so background
@@ -236,6 +300,9 @@ func NewApp(cfg *config.Config, store storage.SessionStore) App {
 		workspaceRoot: workspace,
 		instructions:  instructions,
 		theme:         themeName,
+		hasDarkBg:     true,
+		themeMode:     themeDark,
+		reducedMotion: reducedMotionEnabled(),
 		userCommands:  loadUserCommands(workspace),
 		log: []logEntry{
 			{Kind: "system", Text: "Welcome to cli_mate. Press / to open commands, choose /provider, then follow the setup.", Time: time.Now()},
@@ -259,10 +326,11 @@ func NewApp(cfg *config.Config, store storage.SessionStore) App {
 		sessionPicker: newSessionPicker(),
 		mcpManager:    newMCPManager(),
 		// Additional feature components
-		transcriptSelection: newTranscriptSelection(),
-		prStatus:            newPRDisplay(),
-		specMode:            newSpecMode(),
-		subchatManager:      newSubchatManager(),
+		transcriptBodyHeights: newTranscriptBodyHeightCache(defaultTranscriptBodyHeightCacheMaxEntries),
+		transcriptSelection:   newTranscriptSelection(),
+		prStatus:              newPRDisplay(),
+		specMode:              newSpecMode(),
+		subchatManager:        newSubchatManager(),
 		// Remaining feature components (phase 2)
 		autocomplete:  newAutocompleteState(),
 		picker:        newGenericPicker(),
@@ -283,7 +351,14 @@ func loadUserCommands(workspace string) []usercommands.Command {
 }
 
 func (a App) Init() tea.Cmd {
-	return tea.Batch(syncTick(), syncFilesCmd(a.workspaceRoot, 5000))
+	return tea.Batch(syncTick(), syncFilesCmd(a.workspaceRoot, 5000), a.initGitSweep())
+}
+
+func (a App) initGitSweep() tea.Cmd {
+	if a.workspaceRoot == "" {
+		return nil
+	}
+	return gitSweepCmd(nil, a.workspaceRoot, true)
 }
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -293,24 +368,32 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.completedStepText = msg.entry.Text
 		// Update streaming tool state
 		if msg.entry.Kind == "tool" {
-			a.streamingTool = &streamingToolCall{
+			tc := &streamingToolCall{
 				name: parseToolName(msg.entry.Text),
 				args: msg.entry.Text,
 			}
 			path := parseToolPath(msg.entry.Text)
 			if path != "" {
-				a.streamingTool.path = path
+				tc.path = path
 			}
+			tc.feedArgs(msg.entry.Text)
+			a.streamingTool = tc
 		}
 		return a, waitForChatMsg(msg.c)
 	case chatToolCallMsg:
-		a.streamingTool = &streamingToolCall{
-			name: msg.toolName,
-			args: msg.args,
-		}
-		path := streamingFilePath(msg.args)
-		if path != "" {
-			a.streamingTool.path = path
+		if a.streamingTool != nil && a.streamingTool.name == msg.toolName {
+			a.streamingTool.feedArgs(msg.args)
+		} else {
+			tc := &streamingToolCall{
+				name: msg.toolName,
+				args: msg.args,
+			}
+			path := streamingFilePath(msg.args)
+			if path != "" {
+				tc.path = path
+			}
+			tc.feedArgs(msg.args)
+			a.streamingTool = tc
 		}
 		return a, waitForChatMsg(msg.c)
 	case chatToolResultMsg:
@@ -333,10 +416,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chatStreamMsg:
 		if msg.clear {
 			a.streamBuffer = ""
-			a.streamFade.clear()
+			if a.streamFade != nil {
+				a.streamFade.clear()
+			}
 		}
 		a.streamBuffer += msg.token
 		if msg.token != "" {
+			if a.streamFade == nil {
+				a.streamFade = newStreamingFade(a.styles.accent.GetForeground(), a.styles.muted.GetForeground())
+			}
 			a.streamFade.addToken(msg.token)
 		}
 		const maxStreamPreviewBytes = 1000
@@ -360,20 +448,22 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.streamBuffer = ""
 		a.tokensUsed = 0
 		a.streamingTool = nil
-		a.streamFade.clear()
+		if a.streamFade != nil {
+			a.streamFade.clear()
+		}
 		a.messages = msg.messages
 		a.persistMessages(msg.messages, previousMessageCount)
 		// Update sidebar
 		if a.sidebar != nil {
-			profile, _ := a.cfg.Active()
+			profile := a.activeProfile()
 			a.sidebar.SetSessionInfo(SessionInfo{
 				Provider: profile.Provider,
 				Model:    profile.Model,
 				Messages: len(msg.messages),
 			})
-			a.sidebar.SetTouchedFiles(touchedFilesFromLog(a.log))
+			a.refreshTouchedFiles()
 		}
-		return a, syncFilesCmd(a.workspaceRoot, 5000)
+		return a, tea.Batch(syncFilesCmd(a.workspaceRoot, 5000), a.maybeGitSweep())
 	case filesSyncedMsg:
 		if slices.Equal(a.files, msg) {
 			return a, nil
@@ -385,11 +475,28 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, syncTick()
 		}
 		return a, tea.Batch(syncTick(), syncFilesCmd(a.workspaceRoot, 5000))
+	case gitSweepMsg:
+		return a.handleGitSweepMsg(msg), nil
+	case exitConfirmExpiredMsg:
+		if msg.seq == a.exitConfirmSeq {
+			a.exitConfirmActive = false
+		}
+		return a, nil
+	case cancelConfirmExpiredMsg:
+		if msg.seq == a.cancelConfirmSeq {
+			a.cancelConfirmActive = false
+		}
+		return a, nil
 	case loadingTickMsg:
 		if !a.loading {
+			if a.spinnerTicking {
+				a.loadingFrame++
+				return a, loadingTick()
+			}
 			return a, nil
 		}
 		a.loadingFrame++
+		a.spinnerTicking = true
 		return a, loadingTick()
 	case tea.KeyMsg:
 		// Route events to overlays first (onboarding, session picker, MCP manager)
@@ -515,7 +622,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Route events to session controls overlay
 		if a.sessionCtrls != nil && a.sessionCtrls.isVisible() {
-			a.sessionCtrls.handleKey(msg.String())
+			action, _ := a.sessionCtrls.handleKey(msg.String())
+			a.handleSessionControlAction(action)
 			return a, nil
 		}
 
@@ -569,30 +677,54 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 
-		if msg.Paste {
-			text := string(msg.Runes)
-			// Check if onboarding is active and handling paste
-			if a.onboarding != nil && a.onboarding.isActive() {
-				a.onboarding.apiKey = text
-				a.input = ""
-				a.cursorPos = 0
-				a.appendLog("system", "API key pasted. Press Enter to confirm.")
-				return a, nil
-			}
-			a.insertText(text)
-			a.selected = 0
-			a.isPasting = true
+	case tea.PasteMsg:
+		text := msg.Content
+		if a.onboarding != nil && a.onboarding.isActive() {
+			a.onboarding.apiKey = text
+			a.input = ""
+			a.cursorPos = 0
+			a.appendLog("system", "API key pasted. Press Enter to confirm.")
 			return a, nil
 		}
+		a.insertText(text)
+		a.selected = 0
+		a.isPasting = true
+		return a, nil
 
 		if a.isPasting {
 			a.isPasting = false
 		}
 
+		// Disarm confirmations on non-matching keys
+		if msg.String() != "ctrl+c" {
+			a.disarmExitConfirmation()
+		}
+		wasConfirmingCancel := a.pending && a.cancelConfirmActive
+		if msg.String() != "esc" {
+			a.disarmCancelConfirmation()
+		}
+
 		switch msg.String() {
 		case "ctrl+c":
-			return a, tea.Quit
+			if cmd := a.handleCtrlC(); cmd != nil {
+				return a, cmd
+			}
+			return a, nil
 		case "esc":
+			if wasConfirmingCancel {
+				a.clearComposer()
+				a.clearSuggestions()
+				a.cancelRun()
+				return a, nil
+			}
+			if a.pending {
+				a.cancelConfirmActive = true
+				a.cancelConfirmSeq++
+				seq := a.cancelConfirmSeq
+				return a, tea.Tick(escCancelConfirmDuration, func(time.Time) tea.Msg {
+					return cancelConfirmExpiredMsg{seq: seq}
+				})
+			}
 			a.back()
 		case "up":
 			a.navigateHistory(-1)
@@ -653,10 +785,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.sidebar.Toggle()
 			}
 		case "ctrl+d":
-			// Toggle detailed transcript
-			if a.sidebar != nil {
-				a.sidebar.Toggle()
-			}
+			a.toggleDetailedTranscript()
 		default:
 			if len(msg.String()) == 1 {
 				a.insertText(msg.String())
@@ -673,50 +802,43 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.renderCache != nil {
 			a.renderCache.clear()
 		}
-	case tea.MouseMsg:
-		switch msg.Button {
-		case tea.MouseButtonWheelUp:
+	case tea.MouseWheelMsg:
+		m := msg.Mouse()
+		if m.Y > 0 {
 			if a.viewport != nil {
 				a.viewport.scrollUp()
 			} else {
 				a.scrollUp()
 			}
-		case tea.MouseButtonWheelDown:
+		} else {
 			if a.viewport != nil {
 				a.viewport.scrollDown()
 			} else {
 				a.scrollDown()
 			}
-		default:
-			if isMouseClick(msg) && a.hoverManager != nil {
-				action := a.hoverManager.handleClick()
-				if strings.HasPrefix(action, "plan_step_click:") {
-					parts := strings.SplitN(action, ":", 2)
-					if len(parts) == 2 && parts[1] != "" {
-						stepIdx := 0
-						fmt.Sscanf(parts[1], "%d", &stepIdx)
-						if a.planPanel != nil && stepIdx < len(a.planPanel.steps) {
-							works := captureWorkFromLog(a.log)
-							a.planStepDetail.show(stepIdx, a.planPanel.steps[stepIdx].Title, works)
-						}
-					}
-				}
+		}
+	case bashResultMsg:
+		a.appendLog("system", msg.output)
+		return a, nil
+	case tea.MouseClickMsg:
+		m := msg.Mouse()
+		if a.hoverManager != nil {
+			_ = a.hoverManager.handleClick()
+		}
+		if a.hoverManager != nil && a.sidebar != nil {
+			planSteps := 0
+			if a.planPanel != nil {
+				planSteps = len(a.planPanel.steps)
 			}
-			if isMouseHover(msg) && a.hoverManager != nil && a.sidebar != nil {
-				planSteps := 0
-				if a.planPanel != nil {
-					planSteps = len(a.planPanel.steps)
-				}
-				touchedFiles := 0
-				a.hoverManager.updateHover(
-					msg.Y,
-					len(a.log),
-					planSteps,
-					touchedFiles,
-					a.sidebar.IsVisible(),
-					a.planPanel != nil && a.planPanel.IsVisible(),
-				)
-			}
+			touchedFiles := 0
+			a.hoverManager.updateHover(
+				m.Y,
+				len(a.log),
+				planSteps,
+				touchedFiles,
+				a.sidebar.IsVisible(),
+				a.planPanel != nil && a.planPanel.IsVisible(),
+			)
 		}
 	}
 	return a, nil
@@ -729,6 +851,9 @@ func loadingTick() tea.Cmd {
 }
 
 func (a App) activeProfile() config.Profile {
+	if a.cfg == nil {
+		return config.Profile{}
+	}
 	profile, err := a.cfg.Active()
 	if err != nil {
 		return config.Profile{}
@@ -740,6 +865,154 @@ func (a *App) appendLog(kind, text string) {
 	a.log = append(a.log, logEntry{Kind: kind, Text: text, Time: time.Now()})
 }
 
+func (a *App) beginRun(cancel context.CancelFunc) {
+	a.runID++
+	a.activeRunID = a.runID
+	a.runCancel = cancel
+	a.pending = true
+	a.turnStartedAt = time.Now()
+	a.spinnerTicking = true
+}
+
+func (a *App) cancelRun() {
+	if a.runCancel != nil {
+		a.runCancel()
+	}
+	if a.pending && a.activeRunID != 0 {
+		if a.flushRunIDs == nil {
+			a.flushRunIDs = make(map[int]string)
+		}
+		a.flushRunIDs[a.activeRunID] = a.sessionID
+	}
+	if a.pending {
+		a.appendLog("system", "Run cancelled.")
+	}
+	a.pending = false
+	a.runCancel = nil
+	a.activeRunID = 0
+	a.cancelConfirmActive = false
+	a.streamBuffer = ""
+	a.streamingTool = nil
+	if a.streamFade != nil {
+		a.streamFade.clear()
+	}
+	a.spinnerTicking = false
+}
+
+func (a *App) disarmExitConfirmation() {
+	if a.exitConfirmActive {
+		a.exitConfirmActive = false
+		a.exitConfirmSeq++
+	}
+}
+
+func (a *App) disarmCancelConfirmation() {
+	if a.cancelConfirmActive {
+		a.cancelConfirmActive = false
+		a.cancelConfirmSeq++
+	}
+}
+
+func (a *App) handleCtrlC() tea.Cmd {
+	if !a.pending && a.input != "" && a.pendingApproval == nil {
+		a.clearComposer()
+		a.clearSuggestions()
+		a.disarmExitConfirmation()
+		return nil
+	}
+	if a.exitConfirmActive {
+		a.disarmExitConfirmation()
+		a.cancelRun()
+		a.exiting = true
+		if len(a.flushRunIDs) > 0 {
+			return nil
+		}
+		return tea.Quit
+	}
+	a.cancelRun()
+	a.exitConfirmActive = true
+	a.exitConfirmSeq++
+	seq := a.exitConfirmSeq
+	return tea.Tick(ctrlCExitConfirmDuration, func(time.Time) tea.Msg {
+		return exitConfirmExpiredMsg{seq: seq}
+	})
+}
+
+func (a *App) handleGitSweepMsg(msg gitSweepMsg) *App {
+	a.gitSweepInFlight = false
+	if !msg.ok {
+		a.gitSweepUnavailable = true
+		if a.gitFileBaseline == nil {
+			a.gitFileBaseline = map[string]bool{}
+		}
+		return a
+	}
+	if msg.baseline {
+		baseline := make(map[string]bool, len(msg.files))
+		for _, f := range msg.files {
+			baseline[f.path] = true
+		}
+		a.gitFileBaseline = baseline
+		return a
+	}
+	for _, f := range msg.files {
+		if a.gitFileBaseline[f.path] {
+			continue
+		}
+		found := false
+		for i := range a.gitTouched {
+			if a.gitTouched[i].path == f.path {
+				a.gitTouched[i] = f
+				found = true
+				break
+			}
+		}
+		if !found {
+			a.gitTouched = append(append([]gitSweepFile(nil), a.gitTouched...), f)
+		}
+	}
+	// Update sidebar with merged files
+	a.refreshTouchedFiles()
+	return a
+}
+
+func (a *App) maybeGitSweep() tea.Cmd {
+	if a.gitSweepInFlight || a.gitSweepUnavailable || a.gitFileBaseline == nil || a.workspaceRoot == "" {
+		return nil
+	}
+	a.gitSweepInFlight = true
+	return gitSweepCmd(nil, a.workspaceRoot, false)
+}
+
+func (a *App) refreshTouchedFiles() {
+	if a.sidebar == nil {
+		return
+	}
+	logFiles := touchedFilesFromLog(a.log)
+	merged := mergeTouchedFiles(logFiles, a.gitTouched)
+	a.sidebar.SetTouchedFiles(merged)
+}
+
+func (a *App) quit() tea.Cmd {
+	return tea.Quit
+}
+
+func (a *App) ensureSpinnerTick() tea.Cmd {
+	if a.spinnerTicking || a.reducedMotion {
+		return nil
+	}
+	a.spinnerTicking = true
+	return loadingTick()
+}
+
+func (a *App) spinnerGlyph() string {
+	if a.reducedMotion {
+		return "•"
+	}
+	spinnerChars := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	return spinnerChars[a.loadingFrame%len(spinnerChars)]
+}
+
 // setInput sets the input field and keeps the cursor at the end.
 func (a *App) setInput(text string) {
 	a.input = text
@@ -747,6 +1020,9 @@ func (a *App) setInput(text string) {
 }
 
 func (a *App) saveSettings() {
+	if a.cfg == nil {
+		return
+	}
 	if err := a.cfg.Save(); err != nil {
 		a.appendLog("error", "Could not save settings: "+err.Error())
 	}
@@ -762,6 +1038,58 @@ func (a *App) scrollDown() {
 	if a.scrollOffset > 0 {
 		a.scrollOffset--
 	}
+}
+
+func (a *App) rememberInput(value string) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed != "" && (len(a.history) == 0 || a.history[len(a.history)-1] != trimmed) {
+		a.history = append(a.history, trimmed)
+	}
+	a.historyIndex = len(a.history)
+}
+
+func (a *App) clearComposer() {
+	if a.composer != nil {
+		a.composer.setText("")
+		a.composer.selection = composerSelectionState{}
+		a.composer.pastePreviews = nil
+	}
+}
+
+func (a *App) clearSuggestions() {
+	if a.autocomplete != nil {
+		a.autocomplete.active = false
+		a.autocomplete.suggestions = nil
+		a.autocomplete.cursor = 0
+	}
+}
+
+func (a *App) queueMessage(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	a.queuedMessage = text
+	a.rememberInput(text)
+	a.clearComposer()
+	a.clearSuggestions()
+}
+
+func (a *App) clearQueuedMessage() {
+	a.queuedMessage = ""
+}
+
+func (a *App) hasQueuedMessage() bool {
+	return strings.TrimSpace(a.queuedMessage) != ""
+}
+
+func renderQueuedMessagePreview(message string, width int) string {
+	message = strings.Join(strings.Fields(message), " ")
+	if message == "" {
+		return ""
+	}
+	line := zeroTheme.accent.Render("[queued]") + " " + zeroTheme.muted.Render(message)
+	return fitStyledLine(line, width)
 }
 
 func (a *App) persistMessages(messages []providers.Message, alreadyPersisted int) {
@@ -782,6 +1110,106 @@ func (a *App) persistMessages(messages []providers.Message, alreadyPersisted int
 		}
 		_ = a.store.AppendMessage(ctx, a.sessionID, agentMsg)
 	}
+}
+
+func (a *App) handleSessionControlAction(action string) {
+	if action == "" {
+		return
+	}
+
+	switch {
+	case strings.HasPrefix(action, "rename:"):
+		title := strings.TrimSpace(strings.TrimPrefix(action, "rename:"))
+		if title == "" {
+			return
+		}
+		if a.store != nil && a.sessionID != "" {
+			if err := a.store.UpdateSessionTitle(context.Background(), a.sessionID, title); err != nil {
+				a.appendLog("error", fmt.Sprintf("Could not rename session: %v", err))
+				return
+			}
+		}
+		a.appendLog("system", fmt.Sprintf("Session renamed to %q.", title))
+	case action == "export":
+		path := ""
+		if a.sessionCtrls != nil {
+			path = a.sessionCtrls.exportPath
+		}
+		a.exportSession(path)
+	case action == "compact":
+		a.compactConversation()
+	case strings.HasPrefix(action, "rewind:"):
+		var idx int
+		if _, err := fmt.Sscanf(strings.TrimPrefix(action, "rewind:"), "%d", &idx); err != nil {
+			a.appendLog("error", fmt.Sprintf("Could not rewind session: %v", err))
+			return
+		}
+		idx = clamp(idx, 0, len(a.messages))
+		a.messages = a.messages[:idx]
+		a.appendLog("system", fmt.Sprintf("Rewound conversation to %d messages.", idx))
+	}
+}
+
+func (a *App) exportSession(path string) {
+	if strings.TrimSpace(path) == "" {
+		path = "cli_mate_export.md"
+	}
+	resolved, err := resolveUIWorkspacePath(a.workspaceRoot, path)
+	if err != nil {
+		a.appendLog("error", fmt.Sprintf("Could not export session: %v", err))
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(resolved), 0o755); err != nil {
+		a.appendLog("error", fmt.Sprintf("Could not create export directory: %v", err))
+		return
+	}
+	if err := os.WriteFile(resolved, []byte(a.sessionMarkdown()), 0o644); err != nil {
+		a.appendLog("error", fmt.Sprintf("Could not export session: %v", err))
+		return
+	}
+	a.appendLog("system", fmt.Sprintf("Session exported to %s.", resolved))
+}
+
+func (a *App) sessionMarkdown() string {
+	var b strings.Builder
+	b.WriteString("# cli_mate session\n\n")
+	if a.workspaceName != "" {
+		b.WriteString("Workspace: ")
+		b.WriteString(a.workspaceName)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("Exported: ")
+	b.WriteString(time.Now().Format(time.RFC3339))
+	b.WriteString("\n\n")
+
+	if len(a.messages) > 0 {
+		for _, msg := range a.messages {
+			b.WriteString("## ")
+			b.WriteString(titleLabel(msg.Role))
+			b.WriteString("\n\n")
+			b.WriteString(msg.Content)
+			b.WriteString("\n\n")
+		}
+		return b.String()
+	}
+
+	for _, entry := range a.log {
+		b.WriteString("## ")
+		b.WriteString(titleLabel(entry.Kind))
+		b.WriteString(" ")
+		b.WriteString(entry.Time.Format("15:04:05"))
+		b.WriteString("\n\n")
+		b.WriteString(entry.Text)
+		b.WriteString("\n\n")
+	}
+	return b.String()
+}
+
+func titleLabel(s string) string {
+	if s == "" {
+		return ""
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func approvalPromptOld(call tools.Call) string {

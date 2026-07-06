@@ -86,6 +86,16 @@ func (as *askUserState) handleKey(key string) (string, bool) {
 			as.typing = false
 		}
 		return "", false
+	case "left":
+		if !as.typing && as.answerCursor > 0 {
+			as.answerCursor--
+		}
+		return "", false
+	case "right":
+		if !as.typing && as.answerCursor < len(q.Options) {
+			as.answerCursor++
+		}
+		return "", false
 	case "enter":
 		if as.typing && as.typedText != "" {
 			as.answers[as.cursor] = as.typedText
@@ -115,14 +125,24 @@ func (as *askUserState) handleKey(key string) (string, bool) {
 				as.typing = true
 				as.typedText = ""
 			}
+		} else {
+			as.typing = true
+			as.typedText = ""
 		}
 		return "", false
 	case "esc":
 		as.active = false
 		return "", true
+	case "backspace":
+		if as.typing && len(as.typedText) > 0 {
+			as.typedText = as.typedText[:len(as.typedText)-1]
+		}
+		return "", false
 	default:
-		if as.typing && len(key) == 1 {
-			as.typedText += key
+		if as.typing {
+			if text, ok := keyText(key); ok {
+				as.typedText += text
+			}
 		}
 	}
 	return "", false
@@ -213,6 +233,6 @@ func (as *askUserState) render(styles appStyles, _ int) string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString(styles.muted.Render("  ↑/↓ navigate · Tab next · Enter select · Esc cancel"))
+	b.WriteString(styles.muted.Render("  ↑/↓ questions · ←/→ choices · Enter select · Esc cancel"))
 	return b.String()
 }
