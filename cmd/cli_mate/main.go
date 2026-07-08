@@ -4,11 +4,16 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 
 	"cli_mate/internal/config"
+	"cli_mate/internal/cron"
 	"cli_mate/internal/storage"
 	"cli_mate/internal/ui"
 	"cli_mate/pkg/logger"
@@ -25,6 +30,7 @@ func newRootCommand() *cobra.Command {
 	var cfgPath string
 	var profileName string
 	var workspace string
+	var daemonMode bool
 
 	cmd := &cobra.Command{
 		Use:   "cli_mate",
@@ -59,6 +65,10 @@ func newRootCommand() *cobra.Command {
 				defer store.Close()
 			}
 
+			if daemonMode {
+				return runDaemon(ctx, cfg, log)
+			}
+
 			app := ui.NewApp(cfg, store)
 			program := tea.NewProgram(app)
 			app.SetProgram(program)
@@ -70,6 +80,7 @@ func newRootCommand() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&cfgPath, "config", "", "path to config file")
 	cmd.PersistentFlags().StringVarP(&profileName, "profile", "p", "default", "profile name")
 	cmd.PersistentFlags().StringVar(&workspace, "workspace", "", "path to workspace root (cwd) - overrides current working directory")
+	cmd.PersistentFlags().BoolVar(&daemonMode, "daemon", false, "run as a headless cron scheduler daemon")
 
 	cmd.AddCommand(newVersionCommand())
 	cmd.AddCommand(newRunCommand())
@@ -78,4 +89,24 @@ func newRootCommand() *cobra.Command {
 	cmd.AddCommand(newMCPServerCommand())
 
 	return cmd
+}
+
+func runDaemon(ctx context.Context, cfg *config.Config, log zerolog.Logger) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("home dir: %w", err)
+	}
+	cronRoot := filepath.Join(home, ".config", "cli_mate", "cron")
+	store := cron.NewStore(cronRoot)
+
+	ws, _ := os.Getwd()
+	scheduler := cron.NewScheduler(store, cfg, ws, log)
+
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	log.Info().Msg("daemon mode started, waiting for signals")
+	scheduler.Start(ctx)
+	log.Info().Msg("daemon mode stopped")
+	return nil
 }
