@@ -215,6 +215,7 @@ type appStyles struct {
 	tokenCount lipgloss.Style
 	cursor     lipgloss.Style
 	// New styles for enhanced UI
+	sidebarPanel lipgloss.Style
 	card         lipgloss.Style
 	cardHeader   lipgloss.Style
 	cardBody     lipgloss.Style
@@ -308,6 +309,8 @@ func buildStyles(c themeColors) appStyles {
 		cursor: lipgloss.NewStyle().
 			Background(c.fg).Foreground(c.bg),
 		// New enhanced styles
+		sidebarPanel: lipgloss.NewStyle().
+			Padding(0, 1),
 		card: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(c.border).

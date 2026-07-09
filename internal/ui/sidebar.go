@@ -74,6 +74,15 @@ func (s *Sidebar) hasContent() bool {
 		s.gitBranch != ""
 }
 
+// SetDimensions explicitly assigns width and height to the sidebar.
+// Called during resize to enforce top-down sizing propagation.
+func (s *Sidebar) SetDimensions(width, height int) {
+	// Store dimensions for use during render (no-op for now,
+	// the Render method already receives these as parameters).
+	_ = width
+	_ = height
+}
+
 // Render produces the sidebar view.
 func (s *Sidebar) Render(width int, height int, styles appStyles) string {
 	if !s.visible {
@@ -140,9 +149,11 @@ func (s *Sidebar) Render(width int, height int, styles appStyles) string {
 	}
 	content = strings.Join(lines, "\n")
 
-	return styles.panel.
+	// Border consolidation: sidebar uses no internal border.
+	// Borders are applied only at the layout composition tier (the outer panel).
+	return styles.sidebarPanel.
 		Width(sidebarWidth).
-		Height(height - 2).
+		Height(height).
 		Render(content)
 }
 

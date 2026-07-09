@@ -175,6 +175,7 @@ type App struct {
 	runCancel           context.CancelFunc
 	runID               int
 	activeRunID         int
+	runLogStart         int
 	exiting             bool
 	turnStartedAt       time.Time
 	exitConfirmActive   bool
@@ -378,6 +379,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			tc.feedArgs(msg.entry.Text)
 			a.streamingTool = tc
 		}
+		// Viewport buffering: auto-scroll to bottom on new entries
+		if a.viewport != nil {
+			a.viewport.setTotalLines(len(a.log))
+			a.viewport.scrollToBottom()
+		}
 		return a, waitForChatMsg(msg.c)
 	case chatToolCallMsg:
 		if a.streamingTool != nil && a.streamingTool.name == msg.toolName {
@@ -393,6 +399,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			tc.feedArgs(msg.args)
 			a.streamingTool = tc
+		}
+		// Viewport buffering: auto-scroll to bottom on tool stream updates
+		if a.viewport != nil {
+			a.viewport.scrollToBottom()
 		}
 		return a, waitForChatMsg(msg.c)
 	case chatToolResultMsg:
@@ -430,6 +440,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(a.streamBuffer) > maxStreamPreviewBytes {
 			a.streamBuffer = a.streamBuffer[len(a.streamBuffer)-maxStreamPreviewBytes:]
 		}
+		// Viewport buffering: auto-scroll to bottom on incoming tokens
+		if a.viewport != nil {
+			a.viewport.scrollToBottom()
+		}
 		return a, waitForChatMsg(msg.c)
 	case chatLoadingStepMsg:
 		a.currentStepText = msg.text
@@ -439,6 +453,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, waitForChatMsg(msg.c)
 	case chatDoneMsg:
 		previousMessageCount := len(a.messages)
+		completionDetails := a.completionDetails(msg.messages, previousMessageCount, msg.err)
 		a.loading = false
 		a.loadingFrame = 0
 		a.loadingSteps = nil
@@ -451,7 +466,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.streamFade.clear()
 		}
 		a.messages = msg.messages
+		if completionDetails != "" {
+			a.appendLog(completionLogKind, completionDetails)
+		}
 		a.persistMessages(msg.messages, previousMessageCount)
+		// Viewport buffering: auto-scroll to bottom when turn completes
+		if a.viewport != nil {
+			a.viewport.setTotalLines(len(a.log))
+			a.viewport.scrollToBottom()
+		}
 		// Update sidebar
 		if a.sidebar != nil {
 			profile := a.activeProfile()
@@ -813,6 +836,24 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.renderCache != nil {
 			a.renderCache.clear()
 		}
+		// Downstream propagation: explicitly assign dimensions to sub-components.
+		// The body height is computed top-down from the window size.
+		if a.viewport == nil {
+			a.viewport = newViewport()
+		}
+		bodyHeight := msg.Height - headerHeight - inputPaneHeight
+		if a.loading || a.hasActiveStreamingTool() {
+			bodyHeight -= toolStreamStripHeightActive
+		}
+		if bodyHeight < minTranscriptHeight {
+			bodyHeight = minTranscriptHeight
+		}
+		a.viewport.setVisibleLines(bodyHeight)
+		a.viewport.setTotalLines(len(a.log))
+		if a.sidebar != nil {
+			sidebarW := min(sidebarFixedWidth, int(float64(msg.Width)*sidebarMaxRatio))
+			a.sidebar.SetDimensions(sidebarW, bodyHeight)
+		}
 	case tea.MouseWheelMsg:
 		if a.viewport == nil {
 			a.viewport = newViewport()
@@ -878,6 +919,7 @@ func (a *App) beginRun(cancel context.CancelFunc) {
 	a.activeRunID = a.runID
 	a.runCancel = cancel
 	a.pending = true
+	a.runLogStart = len(a.log)
 	a.turnStartedAt = time.Now()
 	a.spinnerTicking = true
 }

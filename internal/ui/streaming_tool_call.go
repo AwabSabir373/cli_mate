@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"charm.land/lipgloss/v2"
 )
 
 const streamingTailLines = 5
@@ -121,11 +123,14 @@ func streamingFilePath(args string) string {
 	return ""
 }
 
-// streamingToolCallView renders the in-progress tool call UI.
-func streamingToolCallView(tc *streamingToolCall, styles appStyles, width int) string {
+// streamingToolCallView renders the in-progress tool call as a compact
+// inline block suitable for embedding in the transcript viewport.
+// All text is wrapped with MaxWidth to prevent overflow clipping.
+func streamingToolCallView(tc *streamingToolCall, styles appStyles, width int, maxHeight int) string {
 	if tc == nil || strings.TrimSpace(tc.name) == "" {
 		return ""
 	}
+	width = max(20, width)
 
 	// Show path with status indicator
 	pathDisplay := tc.path
@@ -141,34 +146,51 @@ func streamingToolCallView(tc *streamingToolCall, styles appStyles, width int) s
 	} else if strings.Contains(strings.ToLower(tc.name), "read") || strings.Contains(strings.ToLower(tc.name), "grep") || strings.Contains(strings.ToLower(tc.name), "glob") {
 		status = "reading"
 	}
-	b.WriteString(styles.roleTool.Render(fmt.Sprintf("%s %s %s", statusIcon, status, pathDisplay)))
+	statusLine := styles.roleTool.Render(fmt.Sprintf("%s %s %s", statusIcon, status, pathDisplay))
+	b.WriteString(fitStyledLine(statusLine, width))
 	b.WriteString("\n")
 
-	// Show content tail with syntax highlighting
+	// Show content tail with syntax highlighting (inline, no panel border)
 	if tc.content != "" {
+		contentLineBudget := streamingTailLines
+		if maxHeight > 0 {
+			contentLineBudget = maxHeight - 2 // status line + footer
+			if contentLineBudget > streamingTailLines {
+				contentLineBudget = streamingTailLines
+			}
+		}
 		lines := strings.Split(tc.content, "\n")
 		totalLines := len(lines)
-		if totalLines > streamingTailLines {
-			lines = lines[totalLines-streamingTailLines:]
+		if contentLineBudget > 0 && totalLines > contentLineBudget {
+			lines = lines[totalLines-contentLineBudget:]
 		}
 		content := strings.Join(lines, "\n")
 
-		// Try to highlight based on file extension
-		lang := ""
-		if tc.path != "" {
-			lexer := cachedLexerForPath(tc.path)
-			if lexer != nil {
-				lang = lexer.Config().Name
+		if contentLineBudget > 0 {
+			// Try to highlight based on file extension
+			lang := ""
+			if tc.path != "" {
+				lexer := cachedLexerForPath(tc.path)
+				if lexer != nil {
+					lang = lexer.Config().Name
+				}
 			}
-		}
-		if lang != "" {
-			content = highlightCode(content, lang)
-		}
+			if lang != "" {
+				content = highlightCode(content, lang)
+			}
 
-		b.WriteString(styles.softPanel.
-			Width(max(20, width-8)).
-			Render(content))
-		b.WriteString("\n")
+			contentWidth := max(20, width-4)
+			content = fitStyledBlock(content, contentWidth, contentLineBudget)
+			// Render inline with MaxWidth — no softPanel border
+			contentStyle := styles.softPanel.
+				Width(contentWidth).
+				MaxWidth(width)
+			if maxHeight > 0 {
+				contentStyle = contentStyle.MaxHeight(max(1, contentLineBudget+2))
+			}
+			b.WriteString(contentStyle.Render(content))
+			b.WriteString("\n")
+		}
 	}
 
 	// Show progress: line count and byte size
@@ -183,14 +205,30 @@ func streamingToolCallView(tc *streamingToolCall, styles appStyles, width int) s
 	}
 	if lineCount > 0 {
 		sizeStr := formatByteCount(byteCount)
-		b.WriteString(styles.muted.Render(fmt.Sprintf("  %d lines | %s", lineCount, sizeStr)))
+		b.WriteString(fitStyledLine(styles.muted.Render(fmt.Sprintf("  %d lines | %s", lineCount, sizeStr)), width))
 		b.WriteString("\n")
 	} else {
-		b.WriteString(styles.muted.Render("  writing..."))
+		b.WriteString(fitStyledLine(styles.muted.Render("  writing..."), width))
 		b.WriteString("\n")
 	}
 
-	return b.String()
+	out := b.String()
+	style := lipgloss.NewStyle().MaxWidth(width)
+	if maxHeight > 0 {
+		style = style.MaxHeight(maxHeight)
+	}
+	return style.Render(out)
+}
+
+func fitStyledBlock(content string, width int, maxLines int) string {
+	lines := viewLines(content)
+	if maxLines > 0 && len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	for i := range lines {
+		lines[i] = fitStyledLine(lines[i], width)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // skipJSONSpace advances past JSON insignificant whitespace.

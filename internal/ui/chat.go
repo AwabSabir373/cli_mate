@@ -159,7 +159,7 @@ func runChatAsync(ctx context.Context, app *App, profile config.Profile, provide
 	prompt, mentionEntries := promptWithMentions(workspaceRoot, text)
 	casualPrompt := agent.IsConversationalPrompt(text)
 	if len(history) == 0 && !casualPrompt {
-		prompt = fmt.Sprintf("Act as a senior developer with 10 years of experience.\nWorkspace Context: %s\n\nUser Request:\n%s\n\nWhen you finish your task, test one time to ensure everything is error free.", filepath.Base(workspaceRoot), prompt)
+		prompt = fmt.Sprintf("Act as a senior developer with 10 years of experience.\nWorkspace Context: %s\n\nUser Request:\n%s\n\nWhen you finish the task, verify the work once and explain the result in readable sections: Summary, Files changed, Verification, and Notes if needed.", filepath.Base(workspaceRoot), prompt)
 	}
 	for _, entry := range mentionEntries {
 		c <- chatStepMsg{entry: entry, c: c}

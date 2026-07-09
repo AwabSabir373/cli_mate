@@ -84,51 +84,231 @@ func (a App) View() tea.View {
 		return wrap(a.detailedTranscriptView())
 	}
 
-	layout := computeLayout(a.width, a.sidebar != nil && a.sidebar.hasContent(), a.planPanel != nil && a.planPanel.IsVisible())
-
-	header := a.renderHeader(layout)
-
+	// Setup view (no messages, not loading)
 	if a.inputMode == "" && len(a.messages) == 0 && !a.loading {
+		header := a.renderHeader(computeLayout(a.width, false, false))
 		return wrap(a.renderSetup(header))
 	}
 
-	var b strings.Builder
+	// ── Rigid 4-zone grid layout (top-down sizing) ──
+	// Header=2, Input=3, ToolStream=2(active)/0(idle), Body=flex
+	grid := a.computeCurrentGrid()
 
-	sidebarContent := ""
-	if layout.ShowSidebar && a.sidebar != nil && a.sidebar.IsVisible() {
-		sidebarContent = a.sidebar.Render(layout.SidebarWidth, a.height-6, a.styles)
-	}
+	// Zone 1: Header (fixed 2 lines)
+	header := a.renderHeaderForGrid(grid)
 
-	if sidebarContent != "" {
-		chatContent := a.renderChatColumn(header, layout)
-		b.WriteString(a.styles.panel.Width(a.width - 4).Render(
-			lipgloss.JoinHorizontal(lipgloss.Top,
-				chatContent,
-				stylesVerticalDivider(a.styles),
-				sidebarContent,
-			),
-		))
-	} else {
-		b.WriteString(a.renderPanelContent(header, layout))
-	}
+	// Zone 2: Body — sidebar + main transcript viewport side by side
+	body := a.renderBodyZone(grid)
 
-	return wrap(b.String())
+	// Zone 3: Tool stream strip (fixed 0 or 2 lines, above input)
+	toolPane := a.renderToolExecutionPane(grid)
+
+	// Zone 4: User input box (fixed 3 lines, permanently at bottom)
+	input := a.renderInputZone(grid)
+
+	// Assemble the rigid grid with JoinVertical
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		body,
+		toolPane,
+		input,
+	)
+
+	return wrap(a.styles.panel.Width(a.width - 4).Render(content))
 }
 
 func stylesVerticalDivider(styles appStyles) string {
 	return styles.muted.Render(" | ")
 }
 
+// computeCurrentGrid computes the rigid grid layout for the current frame.
+// All dimensions are strictly derived from the terminal size downward.
+func (a App) computeCurrentGrid() gridLayout {
+	hasSidebar := a.sidebar != nil && a.sidebar.hasContent()
+	hasPlan := a.planPanel != nil && a.planPanel.IsVisible()
+
+	suggestions := a.suggestionLinesForGrid()
+	permissions := a.permissionLinesForGrid()
+	toolActive := a.loading || a.hasActiveStreamingTool()
+
+	return computeGridLayout(
+		a.width, a.height,
+		hasSidebar, hasPlan,
+		suggestions, permissions,
+		toolActive,
+	)
+}
+
+// suggestionLinesForGrid returns the number of lines the suggestion list
+// occupies when visible, 0 otherwise.
+func (a App) suggestionLinesForGrid() int {
+	items := a.currentSuggestions()
+	if len(items) == 0 {
+		return 0
+	}
+	n := len(items)
+	if n > 12 {
+		n = 12
+	}
+	return n // each suggestion is one line
+}
+
+// permissionLinesForGrid returns the number of lines the permission prompt
+// occupies when active, 0 otherwise.
+func (a App) permissionLinesForGrid() int {
+	if a.permissionPrompt == nil || !a.permissionPrompt.active {
+		return 0
+	}
+	return permissionHeaderHeight
+}
+
+// renderHeaderForGrid renders the single-line header row for the grid.
+func (a App) renderHeaderForGrid(grid gridLayout) string {
+	return a.renderHeader(layoutConfig{
+		Tier:            grid.Tier,
+		ShowHeaderPills: grid.ShowHeaderPills,
+	})
+}
+
+// renderBodyZone renders Zone 2: sidebar + main transcript viewport side by side.
+func (a App) renderBodyZone(grid gridLayout) string {
+	sidebarContent := ""
+	if grid.ShowSidebar && a.sidebar != nil && a.sidebar.IsVisible() {
+		sidebarContent = a.sidebar.Render(grid.SidebarWidth, grid.BodyHeight, a.styles)
+	}
+
+	if sidebarContent != "" {
+		chatContent := a.renderChatColumnForGrid(grid)
+		return lipgloss.JoinHorizontal(lipgloss.Top,
+			chatContent,
+			stylesVerticalDivider(a.styles),
+			sidebarContent,
+		)
+	}
+
+	return a.renderMainTranscriptForGrid(grid)
+}
+
+// renderChatColumnForGrid renders the main chat column for the sidebar layout.
+func (a App) renderChatColumnForGrid(grid gridLayout) string {
+	var b strings.Builder
+
+	// Header
+	b.WriteString(a.renderHeaderForGrid(grid))
+	b.WriteString("\n\n")
+
+	// Suggestions (if any)
+	if len(a.currentSuggestions()) > 0 {
+		b.WriteString(a.renderSuggestionsFor(grid.ChatWidth))
+		b.WriteString("\n")
+	}
+
+	// Permission prompt (if any)
+	if a.permissionPrompt != nil && a.permissionPrompt.active {
+		b.WriteString(a.permissionPrompt.render(a.styles, grid.ChatWidth))
+		b.WriteString("\n")
+	}
+
+	// Transcript viewport — fills the remaining grid height
+	b.WriteString(a.consoleFor(grid.ChatWidth, grid.TranscriptHeight, grid.TranscriptHeight))
+
+	return lipgloss.NewStyle().Width(max(40, grid.ChatWidth)).Render(b.String())
+}
+
+// renderMainTranscriptForGrid renders the main transcript area without sidebar.
+func (a App) renderMainTranscriptForGrid(grid gridLayout) string {
+	var b strings.Builder
+
+	// Suggestions (if any)
+	if len(a.currentSuggestions()) > 0 {
+		b.WriteString(a.renderSuggestionsFor(grid.ChatWidth))
+		b.WriteString("\n")
+	}
+
+	// Permission prompt (if any)
+	if a.permissionPrompt != nil && a.permissionPrompt.active {
+		b.WriteString(a.permissionPrompt.render(a.styles, grid.ChatWidth))
+		b.WriteString("\n")
+	}
+
+	// Transcript viewport — fills the remaining grid height
+	b.WriteString(a.consoleFor(grid.ChatWidth, grid.TranscriptHeight, grid.TranscriptHeight))
+
+	return b.String()
+}
+
+// renderToolExecutionPane renders Zone 3: the tool stream strip.
+// This is a compact 2-line status bar statically placed above the input box.
+// The main tool output flows inline in the transcript viewport.
+func (a App) renderToolExecutionPane(grid gridLayout) string {
+	if grid.ToolPaneHeight == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+
+	if a.loading {
+		// Line 1: spinner + current step text
+		b.WriteString(a.loadingText())
+		b.WriteString("\n")
+		// Line 2: completed step (if any) or muted fill
+		if a.completedStepText != "" {
+			b.WriteString(a.styles.success.Render("✓"))
+			b.WriteString(" ")
+			b.WriteString(a.styles.muted.Render(a.completedStepText))
+		} else {
+			b.WriteString(a.styles.muted.Render(strings.Repeat("─", min(40, grid.ChatWidth))))
+		}
+	} else if a.streamBuffer != "" && a.streamFade != nil {
+		preview := a.streamFade.render()
+		if preview != "" {
+			// Line 1: stream preview tail (max 1 line)
+			lines := strings.Split(preview, "\n")
+			lastLine := ""
+			for i := len(lines) - 1; i >= 0; i-- {
+				if strings.TrimSpace(lines[i]) != "" {
+					lastLine = lines[i]
+					break
+				}
+			}
+			b.WriteString(a.styles.accent.Render("▸ "))
+			b.WriteString(fitStyledLine(a.styles.muted.Render(lastLine), grid.ChatWidth-2))
+			b.WriteString("\n")
+			// Line 2: status
+			b.WriteString(a.styles.muted.Render(strings.Repeat("─", min(40, grid.ChatWidth))))
+		}
+	}
+
+	out := b.String()
+	if out == "" {
+		return ""
+	}
+
+	// Cap to the fixed pane height (2 lines)
+	if visualHeight(out) > grid.ToolPaneHeight {
+		out = takeLastLines(out, grid.ToolPaneHeight)
+	}
+
+	return out
+}
+
+// renderInputZone renders Zone 4: the user input box, permanently locked at the bottom.
+func (a App) renderInputZone(grid gridLayout) string {
+	return a.renderPromptFor(grid.ChatWidth)
+}
+
 func (a App) renderPanelContent(header string, layout layoutConfig) string {
+	grid := a.computeCurrentGrid()
+
 	var b strings.Builder
 	b.WriteString(header)
 	b.WriteString("\n\n")
 
-	availableHeight := a.consoleHeightBudget(layout.ChatWidth, true)
-
-	// Chat transcript — flexible region above fixed chrome
-	if len(a.messages) > 0 || len(a.log) > 0 {
-		b.WriteString(a.consoleFor(layout.ChatWidth, layout.ConsoleLines, availableHeight))
+	// Chat transcript — flexible region above fixed chrome.
+	// Use TranscriptHeight as the height budget so the transcript never
+	// overflows the grid's allocated space.
+	if a.hasTranscriptContent() {
+		b.WriteString(a.consoleFor(layout.ChatWidth, grid.TranscriptHeight, grid.TranscriptHeight))
 		b.WriteString("\n")
 	}
 
@@ -258,14 +438,19 @@ func (a App) renderWorkspacePills() string {
 }
 
 func (a App) renderChatContent(layout layoutConfig) string {
+	return a.renderChatContentWithHeaderBudget(layout, false)
+}
+
+func (a App) renderChatContentWithHeaderBudget(layout layoutConfig, includeHeader bool) string {
 	renderWidth := max(40, layout.ChatWidth)
 	var b strings.Builder
 
-	availableHeight := a.consoleHeightBudget(renderWidth, false)
+	// Use grid layout for consistent height calculation
+	grid := a.computeCurrentGrid()
 
 	// Show transcript messages
-	if len(a.messages) > 0 || len(a.log) > 0 {
-		b.WriteString(a.consoleFor(renderWidth, layout.ConsoleLines, availableHeight))
+	if a.hasTranscriptContent() {
+		b.WriteString(a.consoleFor(renderWidth, grid.TranscriptHeight, grid.TranscriptHeight))
 		b.WriteString("\n")
 	}
 
@@ -293,20 +478,12 @@ func (a App) renderChatColumn(header string, layout layoutConfig) string {
 	var b strings.Builder
 	b.WriteString(header)
 	b.WriteString("\n\n")
-	b.WriteString(a.renderChatContent(layout))
+	b.WriteString(a.renderChatContentWithHeaderBudget(layout, true))
 	return lipgloss.NewStyle().Width(max(40, layout.ChatWidth)).Render(b.String())
 }
 
 func (a App) renderActivityStrip(width int) string {
 	var b strings.Builder
-
-	if a.streamingTool != nil && !a.streamingTool.completed {
-		toolView := streamingToolCallView(a.streamingTool, a.styles, width)
-		if toolView != "" {
-			b.WriteString(toolView)
-			b.WriteString("\n")
-		}
-	}
 
 	if a.loading {
 		b.WriteString(a.loadingText())
@@ -335,10 +512,6 @@ func (a App) renderActivityStrip(width int) string {
 }
 
 const (
-	// panelChromeLines accounts for outer panel border (2) + padding (2).
-	panelChromeLines = 4
-	// minConsoleHeight keeps at least a few transcript lines visible.
-	minConsoleHeight = 3
 	// maxPromptContentLines keeps the composer a small bottom portion.
 	maxPromptContentLines = 3
 	// maxActivityStripLines caps live tool/loading chrome above the input.
@@ -386,48 +559,63 @@ func (a App) promptChromeLines() int {
 	return a.promptContentLineCount() + 2
 }
 
+func (a App) activityStripBudgetLines() int {
+	if a.loading {
+		if a.completedStepText != "" {
+			return 2
+		}
+		return 1
+	}
+	if a.streamBuffer != "" {
+		return maxActivityPreviewLines
+	}
+	return 0
+}
+
 // consoleHeightBudget reserves space for fixed chrome so the input never scrolls off.
-func (a App) consoleHeightBudget(width int, includeHeader bool) int {
-	h := a.height
-	if h <= 0 {
-		h = 30
+// In the rigid grid layout, this returns the pre-computed transcript height
+// from the grid, ensuring the viewport never shifts during streaming.
+func (a App) consoleHeightBudget(_ int, includeHeader bool) int {
+	// Use the grid layout when available for consistent height calculation.
+	if a.height > 0 {
+		grid := a.computeCurrentGrid()
+		return grid.TranscriptHeight
 	}
 
-	reserved := panelChromeLines
-	if includeHeader {
-		reserved += 2 // header row + blank
-	}
-	reserved += a.promptChromeLines()
-
-	if n := len(a.currentSuggestions()); n > 0 {
-		reserved += n + 1
-	}
-	if a.permissionPrompt != nil && a.permissionPrompt.active {
-		// Estimate permission block without depending on full render side effects.
-		reserved += 4
-	}
-
-	// Activity strip is rendered after the console; reserve a compact slice.
-	activityReserve := 0
-	if a.loading || (a.streamingTool != nil && !a.streamingTool.completed) || a.streamBuffer != "" {
-		activityReserve = maxActivityStripLines
-	}
-	reserved += activityReserve
-	reserved += 2 // section spacing / scroll hints
-
-	available := h - reserved
-	if available < minConsoleHeight {
-		available = minConsoleHeight
-	}
-	return available
+	// Fallback for edge cases (zero-size terminal).
+	return minTranscriptHeight
 }
 
 func (a App) console() string {
 	return a.consoleFor(a.width-8, 12, 0)
 }
 
+const liveToolLogKind = "tool_live"
+
+func (a App) hasActiveStreamingTool() bool {
+	return a.streamingTool != nil && !a.streamingTool.completed
+}
+
+func (a App) hasTranscriptContent() bool {
+	return len(a.messages) > 0 || len(a.log) > 0 || a.hasActiveStreamingTool()
+}
+
+func (a App) transcriptEntries() []logEntry {
+	if !a.hasActiveStreamingTool() {
+		return a.log
+	}
+	entries := make([]logEntry, 0, len(a.log)+1)
+	entries = append(entries, a.log...)
+	entries = append(entries, logEntry{
+		Kind: liveToolLogKind,
+		Text: a.streamingTool.name,
+		Time: time.Now(),
+	})
+	return entries
+}
+
 func (a App) consoleFor(width int, visibleLines int, heightBudget int) string {
-	entries := a.log
+	entries := a.transcriptEntries()
 
 	if len(entries) == 0 {
 		return ""
@@ -469,7 +657,14 @@ func (a App) consoleFor(width int, visibleLines int, heightBudget int) string {
 	linesUsed := 0
 
 	for i := end - 1; i >= 0; i-- {
-		row := a.renderLogEntry(entries[i], i, renderWidth)
+		if bodyBudget > 0 && linesUsed >= bodyBudget {
+			break
+		}
+		heightLimit := 0
+		if bodyBudget > 0 {
+			heightLimit = bodyBudget - linesUsed
+		}
+		row := a.renderLogEntryWithHeightLimit(entries[i], i, renderWidth, heightLimit)
 		entryLines := visualHeight(row)
 		if entryLines < 1 {
 			entryLines = 1
@@ -545,18 +740,26 @@ func (a App) consoleFor(width int, visibleLines int, heightBudget int) string {
 			out += "\n"
 		}
 	}
+	// Width is already constrained by individual entry rendering functions
+	// (renderLogEntryWithHeightLimit, streamingToolCallView, etc.).
 	return out
 }
 
 // renderLogEntry renders a single log entry with timestamp and role marker.
 func (a App) renderLogEntry(entry logEntry, entryIdx int, renderWidth int) string {
+	return a.renderLogEntryWithHeightLimit(entry, entryIdx, renderWidth, 0)
+}
+
+func (a App) renderLogEntryWithHeightLimit(entry logEntry, entryIdx int, renderWidth int, heightLimit int) string {
 	ts := entry.Time.Format("15:04:05")
 	timeStr := a.styles.logTime.Render(ts)
 
 	var marker string
 	switch entry.Kind {
-	case "tool":
+	case "tool", liveToolLogKind:
 		marker = a.styles.roleTool.Render("tool")
+	case completionLogKind:
+		marker = a.styles.success.Render("done")
 	case "file":
 		marker = a.styles.roleFile.Render("file")
 	case "system":
@@ -569,6 +772,23 @@ func (a App) renderLogEntry(entry logEntry, entryIdx int, renderWidth int) strin
 		marker = a.styles.muted.Render(entry.Kind)
 	}
 	marker = a.styles.logPrefix.Render(marker)
+
+	if entry.Kind == liveToolLogKind {
+		contentWidth := max(20, renderWidth-lipgloss.Width(timeStr)-lipgloss.Width(marker)-2)
+		entryRendered := streamingToolCallView(a.streamingTool, a.styles, contentWidth, heightLimit)
+		if entryRendered == "" {
+			return ""
+		}
+		return fmt.Sprintf("%s %s %s", timeStr, marker, entryRendered)
+	}
+	if entry.Kind == completionLogKind {
+		contentWidth := max(20, renderWidth-lipgloss.Width(timeStr)-lipgloss.Width(marker)-2)
+		entryRendered := a.renderCompletionEntry(entry.Text, contentWidth, heightLimit)
+		if entryRendered == "" {
+			return ""
+		}
+		return fmt.Sprintf("%s %s %s", timeStr, marker, entryRendered)
+	}
 
 	entryRendered := ""
 	if entry.renderedText != "" && entry.renderWidth == renderWidth {
