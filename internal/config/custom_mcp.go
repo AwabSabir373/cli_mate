@@ -86,14 +86,14 @@ func LoadCustomMCPConfig(path string) (*CustomMCPFile, error) {
 
 // SaveCustomMCPConfig writes the custom MCP configuration to the given path.
 func SaveCustomMCPConfig(path string, cfg *CustomMCPFile) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }
 
 // ConvertToInternal converts custom MCP server configs to the internal representation.

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"charm.land/lipgloss/v2"
 )
 
 // cardBody represents the rendered body of a tool card.
@@ -14,8 +12,6 @@ type cardBody struct {
 	header  string
 	content string
 	footer  string
-	diffAdd int
-	diffDel int
 }
 
 // toolBodyRenderer renders a tool call result into a structured card body.
@@ -113,59 +109,40 @@ func (r *toolBodyRegistry) render(req toolBodyRequest) cardBody {
 
 // --- Individual Renderers ---
 
-// renderDiffToolBody renders a diff-focused card for file edit tools.
+// renderDiffToolBody renders a compact card for file edit tools.
 func renderDiffToolBody(req toolBodyRequest) cardBody {
 	detail := req.detail
 	if detail == "" {
 		detail = req.arg
 	}
 
-	// Extract structured info from JSON args
 	path := extractArgString(req.argsJSON, "path", "file_path", "file")
 	if path == "" {
 		path = req.path
 	}
-	body := cardBody{
-		header: fmt.Sprintf("edit %s", fallback(path, req.name)),
-	}
 
-	// Check if content looks like a diff
 	lines := strings.Split(detail, "\n")
 	var added, removed int
-	var contentLines []string
-
-	maxLines := 30
 	for _, line := range lines {
-		if len(contentLines) >= maxLines {
-			contentLines = append(contentLines, fmt.Sprintf("  ... +%d more lines", len(lines)-maxLines))
-			break
-		}
 		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
-			contentLines = append(contentLines, lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("| "+line))
 			added++
 		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
-			contentLines = append(contentLines, lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("| "+line))
 			removed++
-		} else if strings.HasPrefix(line, "@@") {
-			contentLines = append(contentLines, lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render("| "+line))
-		} else if strings.HasPrefix(line, " ") {
-			contentLines = append(contentLines, "| "+line)
-		} else if strings.TrimSpace(line) != "" {
-			contentLines = append(contentLines, "  "+line)
 		}
 	}
 
-	body.content = strings.Join(contentLines, "\n")
-	body.diffAdd = added
-	body.diffDel = removed
-
-	if len(lines) > maxLines {
-		body.footer = fmt.Sprintf("  (%d lines total)", len(lines))
+	displayPath := displayPath(path)
+	footer := ""
+	if added > 0 || removed > 0 {
+		footer = fmt.Sprintf("+%d -%d  %d lines", added, removed, len(lines))
 	} else {
-		body.footer = fmt.Sprintf("  +%d -%d", added, removed)
+		footer = fmt.Sprintf("%d lines", len(lines))
 	}
 
-	return body
+	return cardBody{
+		header: fmt.Sprintf("edit %s", fallback(displayPath, req.name)),
+		footer: footer,
+	}
 }
 
 // renderExploreToolBody renders a compact card for file reading/listing.
@@ -174,9 +151,6 @@ func renderExploreToolBody(req toolBodyRequest) cardBody {
 	if path == "" {
 		path = req.path
 	}
-	body := cardBody{
-		header: fmt.Sprintf("read %s", fallback(path, req.name)),
-	}
 
 	detail := req.detail
 	if detail == "" {
@@ -184,91 +158,62 @@ func renderExploreToolBody(req toolBodyRequest) cardBody {
 	}
 
 	lines := strings.Split(detail, "\n")
-	const maxPreviewLines = 15
+	lineCount := len(lines)
 
-	if len(lines) <= maxPreviewLines+1 {
-		body.content = detail
-		body.footer = fmt.Sprintf("%d lines", len(lines))
-	} else {
-		preview := strings.Join(lines[:maxPreviewLines], "\n")
-		body.content = preview
-		body.footer = fmt.Sprintf("%d lines (+%d collapsed)", len(lines), len(lines)-maxPreviewLines)
+	displayPath := displayPath(path)
+	return cardBody{
+		header: fmt.Sprintf("read %s", fallback(displayPath, req.name)),
+		footer: fmt.Sprintf("%d lines", lineCount),
 	}
-
-	return body
 }
 
-// renderBashToolBody renders a card for bash/shell command output.
+// renderBashToolBody renders a compact card for bash/shell command output.
 func renderBashToolBody(req toolBodyRequest) cardBody {
 	cmd := extractArgString(req.argsJSON, "command", "cmd", "script")
 	if cmd == "" {
 		cmd = req.arg
 	}
-	body := cardBody{
-		header: fmt.Sprintf("$ %s", truncateString(cmd, 60)),
-	}
 
 	detail := req.detail
 	if detail == "" {
 		detail = req.arg
 	}
 
-	const maxOutputLines = 20
 	lines := strings.Split(detail, "\n")
+	lineCount := len(lines)
 
-	if len(lines) <= maxOutputLines+1 {
-		body.content = detail
-		body.footer = fmt.Sprintf("exit: %d lines", len(lines))
-	} else {
-		// Show first and last few lines
-		head := lines[:8]
-		tail := lines[len(lines)-8:]
-		body.content = strings.Join(head, "\n") +
-			fmt.Sprintf("\n  ... %d lines omitted ...\n", len(lines)-16) +
-			strings.Join(tail, "\n")
-		body.footer = fmt.Sprintf("%d total lines", len(lines))
+	// Check for error indicators
+	status := "done"
+	if strings.Contains(strings.ToLower(detail), "error") || strings.Contains(strings.ToLower(detail), "fail") {
+		status = "error"
 	}
 
-	return body
+	return cardBody{
+		header: fmt.Sprintf("$ %s", truncateString(cmd, 60)),
+		footer: fmt.Sprintf("%s  %d lines", status, lineCount),
+	}
 }
 
-// renderWebToolBody renders a card for web search/fetch results.
+// renderWebToolBody renders a compact card for web search/fetch results.
 func renderWebToolBody(req toolBodyRequest) cardBody {
-	body := cardBody{
-		header: fmt.Sprintf("web %s", req.name),
-	}
-
 	detail := req.detail
 	if detail == "" {
 		detail = req.arg
 	}
 
-	const maxLines = 12
 	lines := strings.Split(detail, "\n")
-	if len(lines) > maxLines {
-		body.content = strings.Join(lines[:maxLines], "\n") +
-			fmt.Sprintf("\n  ... %d more results ...", len(lines)-maxLines)
-	} else {
-		body.content = detail
-	}
+	lineCount := len(lines)
 
-	return body
+	return cardBody{
+		header: fmt.Sprintf("web %s", req.name),
+		footer: fmt.Sprintf("%d lines", lineCount),
+	}
 }
 
 // renderPlanSummaryToolBody renders a compact summary for plan/skill updates.
 func renderPlanSummaryToolBody(req toolBodyRequest) cardBody {
-	detail := req.detail
-	if detail == "" {
-		detail = req.arg
-	}
-	lines := strings.Split(detail, "\n")
-	if len(lines) > 3 {
-		detail = strings.Join(lines[:3], "\n")
-	}
-
 	return cardBody{
-		header:  fmt.Sprintf("plan %s", req.name),
-		content: detail,
+		header: fmt.Sprintf("plan %s", req.name),
 	}
 }
 
@@ -280,27 +225,19 @@ func renderHiddenToolBody(req toolBodyRequest) cardBody {
 	}
 }
 
-// renderFallbackToolBody renders a generic card for unregistered tools.
+// renderFallbackToolBody renders a compact card for unregistered tools.
 func renderFallbackToolBody(req toolBodyRequest) cardBody {
-	body := cardBody{
-		header: fmt.Sprintf("tool %s", fallback(req.name, "call")),
-	}
-
 	detail := req.detail
 	if detail == "" {
 		detail = req.arg
 	}
 
-	const maxLines = 10
 	lines := strings.Split(detail, "\n")
-	if len(lines) > maxLines {
-		body.content = strings.Join(lines[:maxLines], "\n") +
-			fmt.Sprintf("\n  ... %d more lines ...", len(lines)-maxLines)
-	} else {
-		body.content = detail
-	}
 
-	return body
+	return cardBody{
+		header: fmt.Sprintf("tool %s", fallback(req.name, "call")),
+		footer: fmt.Sprintf("%d lines", len(lines)),
+	}
 }
 
 // --- Card Rendering (with styles) ---
@@ -320,7 +257,7 @@ func (r *toolBodyRegistry) renderCard(req toolBodyRequest, styles appStyles, wid
 	b.WriteString(styles.roleTool.Render(body.header))
 	b.WriteString("\n")
 
-	// Content
+	// Content (if any renderer still provides it)
 	if body.content != "" {
 		cardContent := styles.softPanel.
 			Width(max(20, width-8)).
@@ -331,15 +268,7 @@ func (r *toolBodyRegistry) renderCard(req toolBodyRequest, styles appStyles, wid
 
 	// Footer
 	if body.footer != "" {
-		diffStr := ""
-		if body.diffAdd > 0 || body.diffDel > 0 {
-			diffStr = fmt.Sprintf("  %s %s",
-				styles.diffAdd.Render(fmt.Sprintf("+%d", body.diffAdd)),
-				styles.diffRemove.Render(fmt.Sprintf("-%d", body.diffDel)),
-			)
-		}
-		footer := styles.muted.Render(body.footer + diffStr)
-		b.WriteString(footer)
+		b.WriteString(styles.muted.Render(body.footer))
 		b.WriteString("\n")
 	}
 

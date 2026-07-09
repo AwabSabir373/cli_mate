@@ -131,6 +131,31 @@ func IsEncrypted(value string) bool {
 	return strings.HasPrefix(value, Prefix)
 }
 
+// DecryptIfNeeded decrypts the value if it carries the encryption prefix,
+// otherwise returns it unchanged (legacy plaintext migration).
+// IMPORTANT: The caller MUST call ZeroString on the result when done with it,
+// and zero any byte slices derived from the result.
+func DecryptIfNeeded(apiKey string) (string, error) {
+	if apiKey == "" || !strings.HasPrefix(apiKey, Prefix) {
+		return apiKey, nil
+	}
+	return Decrypt(apiKey)
+}
+
+// DecryptIfNeededBytes is like DecryptIfNeeded but returns a []byte so the
+// caller can thoroughly scrub the key material with ZeroBytes after use.
+// This is the preferred variant for JIT decryption scenarios.
+func DecryptIfNeededBytes(apiKey string) ([]byte, error) {
+	if apiKey == "" || !strings.HasPrefix(apiKey, Prefix) {
+		return []byte(apiKey), nil
+	}
+	raw, err := Decrypt(apiKey)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(raw), nil
+}
+
 // ZeroBytes overwrites a byte slice with zeros to scrub key material from memory.
 func ZeroBytes(b []byte) {
 	for i := range b {

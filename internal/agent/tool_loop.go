@@ -261,7 +261,7 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 
 			var mutatedThisTurn bool
 			if opts.Hooks == nil && opts.ApproveTool == nil {
-				if calls, ok := parseNativeToolCalls(nativeToolCalls); ok && auto.canRunToolCallsInParallel(calls) {
+				if calls, ok := parseNativeToolCalls(ctx, nativeToolCalls); ok && auto.canRunToolCallsInParallel(calls) {
 					results := r.executeToolBatchParallel(ctx, auto, calls)
 					for i, call := range calls {
 						result := results[i]
@@ -335,14 +335,24 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 				}
 			}
 
+			// Tool argument preparation with hard timeout: prevents the UI
+			// from freezing permanently on "Preparing tool call" if the JSON
+			// decoder or argument parser stalls on malformed stream output.
+			// Each native tool call's argument parsing gets its own 30s timeout
+			// to prevent a single malformed call from freezing the entire loop.
 			for i, tc := range nativeToolCalls {
 				var args map[string]any
 				if tc.Arguments != "" {
-					if first, ok := recoverableToolArguments(tc.Arguments); ok {
+					// Derive a timeout context so recoverableToolArguments
+					// (which now checks ctx.Done() in its loop) can bail out
+					// if argument parsing takes too long.
+					parseCtx, parseCancel := context.WithTimeout(ctx, 30*time.Second)
+					if first, ok := recoverableToolArguments(parseCtx, tc.Arguments); ok {
 						json.Unmarshal([]byte(first), &args)
 					} else {
 						json.Unmarshal([]byte(tc.Arguments), &args)
 					}
+					parseCancel()
 					if args == nil {
 						args = map[string]any{}
 					}
@@ -506,7 +516,7 @@ func (r *CodingRunner) Run(ctx context.Context, opts RunOptions) (RunResult, err
 			return RunResult{Messages: messages, Answer: answer, Steps: steps, Events: auto.events()}, nil
 		}
 
-		call, ok, err := parseToolCall(answer)
+		call, ok, err := parseToolCall(ctx, answer)
 		if err != nil {
 			errMsg := "Tool call parse error: " + err.Error()
 			messages = append(messages,
@@ -792,13 +802,18 @@ func (r *CodingRunner) executeToolIfApproved(ctx context.Context, call tools.Cal
 	return r.executeTool(ctx, call)
 }
 
-func parseNativeToolCalls(native []providers.ToolCall) ([]tools.Call, bool) {
+func parseNativeToolCalls(ctx context.Context, native []providers.ToolCall) ([]tools.Call, bool) {
 	calls := make([]tools.Call, 0, len(native))
 	for _, tc := range native {
+		select {
+		case <-ctx.Done():
+			return nil, false
+		default:
+		}
 		var args map[string]any
 		if strings.TrimSpace(tc.Arguments) != "" {
 			payload := tc.Arguments
-			if first, ok := recoverableToolArguments(payload); ok {
+			if first, ok := recoverableToolArguments(ctx, payload); ok {
 				payload = first
 			}
 			if err := json.Unmarshal([]byte(payload), &args); err != nil {
@@ -843,13 +858,24 @@ func (r *CodingRunner) executeToolBatchParallel(ctx context.Context, auto *auton
 	return results
 }
 
-func recoverableToolArguments(arguments string) (string, bool) {
+func recoverableToolArguments(ctx context.Context, arguments string) (string, bool) {
 	dec := json.NewDecoder(strings.NewReader(arguments))
 	var head json.RawMessage
 	if err := dec.Decode(&head); err != nil {
 		return "", false
 	}
-	for {
+	// Safety breaker: prevent infinite loop if the decoder stalls
+	// on malformed input. 100 values at the top level is more than
+	// enough for any valid tool call. The context is checked on each
+	// iteration so cancellation (e.g. user Ctrl+C or outer timeout)
+	// breaks out immediately.
+	const maxTopLevelValues = 100
+	for i := 0; i < maxTopLevelValues; i++ {
+		select {
+		case <-ctx.Done():
+			return "", false
+		default:
+		}
 		var rest json.RawMessage
 		if err := dec.Decode(&rest); err != nil {
 			if err == io.EOF {
@@ -858,6 +884,8 @@ func recoverableToolArguments(arguments string) (string, bool) {
 			return "", false
 		}
 	}
+	// Safety: exceeded max top-level values, treat as malformed.
+	return "", false
 }
 
 func isImageRejectionError(err error) bool {
@@ -876,7 +904,7 @@ func isImageRejectionError(err error) bool {
 	return false
 }
 
-func parseToolCall(text string) (tools.Call, bool, error) {
+func parseToolCall(ctx context.Context, text string) (tools.Call, bool, error) {
 	payload := strings.TrimSpace(text)
 	if match := toolBlockPattern.FindStringSubmatch(text); len(match) == 2 {
 		payload = strings.TrimSpace(match[1])
@@ -893,9 +921,16 @@ func parseToolCall(text string) (tools.Call, bool, error) {
 		Args      json.RawMessage `json:"args"`
 	}
 
-	if first, ok := recoverableToolArguments(payload); ok {
+	// Use a timeout context so recoverableToolArguments can bail out
+	// if the JSON decoder stalls on malformed input.
+	parseCtx, parseCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer parseCancel()
+	if first, ok := recoverableToolArguments(parseCtx, payload); ok {
 		payload = first
 	} else {
+		if parseCtx.Err() != nil {
+			return tools.Call{}, true, fmt.Errorf("tool call parsing failed: %v", parseCtx.Err())
+		}
 		return tools.Call{}, true, fmt.Errorf("malformed or incomplete JSON payload")
 	}
 

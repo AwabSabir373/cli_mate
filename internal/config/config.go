@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,17 +71,10 @@ func Load(path string, profileName string) (*Config, error) {
 		return nil, err
 	}
 
-	// Decrypt API keys on load. Plaintext legacy values pass through unchanged.
-	for name, profile := range cfg.Profiles {
-		if profile.APIKey != "" {
-			decrypted, err := crypto.Decrypt(profile.APIKey)
-			if err != nil {
-				return nil, fmt.Errorf("config: decrypt api key for profile %q: %w", name, err)
-			}
-			profile.APIKey = decrypted
-			cfg.Profiles[name] = profile
-		}
-	}
+	// API keys are kept in their encrypted form (enc:...) in memory.
+	// They are decrypted just-in-time by provider clients immediately before
+	// being transmitted over the network, and zeroed immediately after.
+	// Plaintext legacy values pass through unchanged.
 
 	if profileName == "" {
 		profileName = v.GetString("activeProfile")

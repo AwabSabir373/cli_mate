@@ -138,7 +138,6 @@ type App struct {
 	scrollOffset      int
 	tokensUsed        int
 	pasteBuffer       string
-	isPasting         bool
 	history           []string
 	historyIndex      int
 	editHistory       []editRecord
@@ -677,24 +676,6 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 
-	case tea.PasteMsg:
-		text := msg.Content
-		if a.onboarding != nil && a.onboarding.isActive() {
-			a.onboarding.apiKey = text
-			a.input = ""
-			a.cursorPos = 0
-			a.appendLog("system", "API key pasted. Press Enter to confirm.")
-			return a, nil
-		}
-		a.insertText(text)
-		a.selected = 0
-		a.isPasting = true
-		return a, nil
-
-		if a.isPasting {
-			a.isPasting = false
-		}
-
 		// Disarm confirmations on non-matching keys
 		if msg.String() != "ctrl+c" {
 			a.disarmExitConfirmation()
@@ -730,10 +711,26 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.navigateHistory(-1)
 		case "down":
 			a.navigateHistory(1)
-		case "alt+up":
-			a.scrollUp()
-		case "alt+down":
-			a.scrollDown()
+		case "alt+up", "pgup":
+			if a.viewport == nil {
+				a.viewport = newViewport()
+				a.viewport.setTotalLines(len(a.log))
+			}
+			if msg.String() == "pgup" {
+				a.viewport.scrollPageUp()
+			} else {
+				a.viewport.scrollBy(mouseWheelScrollStep)
+			}
+		case "alt+down", "pgdown":
+			if a.viewport == nil {
+				a.viewport = newViewport()
+				a.viewport.setTotalLines(len(a.log))
+			}
+			if msg.String() == "pgdown" {
+				a.viewport.scrollPageDown()
+			} else {
+				a.viewport.scrollBy(-mouseWheelScrollStep)
+			}
 		case "tab":
 			a.acceptSelectionOrSubmit()
 		case "enter":
@@ -792,6 +789,20 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.selected = 0
 			}
 		}
+
+	case tea.PasteMsg:
+		text := msg.Content
+		if a.onboarding != nil && a.onboarding.isActive() {
+			a.onboarding.apiKey = text
+			a.input = ""
+			a.cursorPos = 0
+			a.appendLog("system", "API key pasted. Press Enter to confirm.")
+			return a, nil
+		}
+		a.insertText(text)
+		a.selected = 0
+		return a, nil
+
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
@@ -803,19 +814,16 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.renderCache.clear()
 		}
 	case tea.MouseWheelMsg:
+		if a.viewport == nil {
+			a.viewport = newViewport()
+			a.viewport.setTotalLines(len(a.log))
+		}
 		m := msg.Mouse()
-		if m.Y > 0 {
-			if a.viewport != nil {
-				a.viewport.scrollUp()
-			} else {
-				a.scrollUp()
-			}
-		} else {
-			if a.viewport != nil {
-				a.viewport.scrollDown()
-			} else {
-				a.scrollDown()
-			}
+		switch m.Button {
+		case tea.MouseWheelUp:
+			a.viewport.scrollBy(mouseWheelScrollStep)
+		case tea.MouseWheelDown:
+			a.viewport.scrollBy(-mouseWheelScrollStep)
 		}
 	case bashResultMsg:
 		a.appendLog("system", msg.output)
@@ -1159,11 +1167,11 @@ func (a *App) exportSession(path string) {
 		a.appendLog("error", fmt.Sprintf("Could not export session: %v", err))
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(resolved), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(resolved), 0o700); err != nil {
 		a.appendLog("error", fmt.Sprintf("Could not create export directory: %v", err))
 		return
 	}
-	if err := os.WriteFile(resolved, []byte(a.sessionMarkdown()), 0o644); err != nil {
+	if err := os.WriteFile(resolved, []byte(a.sessionMarkdown()), 0o600); err != nil {
 		a.appendLog("error", fmt.Sprintf("Could not export session: %v", err))
 		return
 	}

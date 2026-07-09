@@ -481,7 +481,7 @@ func (a *App) undoLastEdit() {
 			return
 		}
 	} else {
-		if err := os.WriteFile(last.path, []byte(last.content), 0o644); err != nil {
+		if err := os.WriteFile(last.path, []byte(last.content), 0o600); err != nil {
 			a.appendLog("error", fmt.Sprintf("Undo failed: %s", err))
 			return
 		}

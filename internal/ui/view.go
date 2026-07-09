@@ -89,7 +89,7 @@ func (a App) View() tea.View {
 	header := a.renderHeader(layout)
 
 	if a.inputMode == "" && len(a.messages) == 0 && !a.loading {
-		return tea.View{Content: a.renderSetup(header)}
+		return wrap(a.renderSetup(header))
 	}
 
 	var b strings.Builder
@@ -124,9 +124,11 @@ func (a App) renderPanelContent(header string, layout layoutConfig) string {
 	b.WriteString(header)
 	b.WriteString("\n\n")
 
-	// Chat transcript
+	availableHeight := a.consoleHeightBudget(layout.ChatWidth, true)
+
+	// Chat transcript — flexible region above fixed chrome
 	if len(a.messages) > 0 || len(a.log) > 0 {
-		b.WriteString(a.consoleFor(layout.ChatWidth, layout.ConsoleLines))
+		b.WriteString(a.consoleFor(layout.ChatWidth, layout.ConsoleLines, availableHeight))
 		b.WriteString("\n")
 	}
 
@@ -142,9 +144,10 @@ func (a App) renderPanelContent(header string, layout layoutConfig) string {
 		b.WriteString("\n\n")
 	}
 
+	// Activity (tools / loading) stays compact above the input
 	b.WriteString(a.renderActivityStrip(layout.ChatWidth))
 
-	// Input prompt
+	// Input stays a small fixed footer portion
 	b.WriteString(a.renderPromptFor(layout.ChatWidth))
 
 	return a.styles.panel.Width(a.width - 4).Render(b.String())
@@ -258,9 +261,11 @@ func (a App) renderChatContent(layout layoutConfig) string {
 	renderWidth := max(40, layout.ChatWidth)
 	var b strings.Builder
 
+	availableHeight := a.consoleHeightBudget(renderWidth, false)
+
 	// Show transcript messages
 	if len(a.messages) > 0 || len(a.log) > 0 {
-		b.WriteString(a.consoleFor(renderWidth, layout.ConsoleLines))
+		b.WriteString(a.consoleFor(renderWidth, layout.ConsoleLines, availableHeight))
 		b.WriteString("\n")
 	}
 
@@ -278,7 +283,7 @@ func (a App) renderChatContent(layout layoutConfig) string {
 
 	b.WriteString(a.renderActivityStrip(renderWidth))
 
-	// Input prompt
+	// Input prompt — always a small portion at the bottom
 	b.WriteString(a.renderPromptFor(renderWidth))
 
 	return b.String()
@@ -305,30 +310,129 @@ func (a App) renderActivityStrip(width int) string {
 
 	if a.loading {
 		b.WriteString(a.loadingText())
-		b.WriteString("\n\n")
+		b.WriteString("\n")
 	} else if a.streamBuffer != "" && a.streamFade != nil {
 		preview := a.streamFade.render()
 		if preview != "" {
-			b.WriteString(preview)
-			b.WriteString("\n\n")
+			// Keep stream preview compact so the input stays visible
+			b.WriteString(takeLastLines(preview, maxActivityPreviewLines))
+			b.WriteString("\n")
 		}
 	}
 
-	return b.String()
+	out := b.String()
+	if out == "" {
+		return ""
+	}
+	// Hard-cap activity chrome so tools never push the input off-screen
+	if visualHeight(out) > maxActivityStripLines {
+		out = takeLastLines(out, maxActivityStripLines)
+		if !strings.HasSuffix(out, "\n") {
+			out += "\n"
+		}
+	}
+	return out
+}
+
+const (
+	// panelChromeLines accounts for outer panel border (2) + padding (2).
+	panelChromeLines = 4
+	// minConsoleHeight keeps at least a few transcript lines visible.
+	minConsoleHeight = 3
+	// maxPromptContentLines keeps the composer a small bottom portion.
+	maxPromptContentLines = 3
+	// maxActivityStripLines caps live tool/loading chrome above the input.
+	maxActivityStripLines = 8
+	// maxActivityPreviewLines caps streaming text previews.
+	maxActivityPreviewLines = 4
+	// mouseWheelScrollStep moves several log entries per wheel notch.
+	mouseWheelScrollStep = 3
+)
+
+func visualHeight(s string) int {
+	if s == "" {
+		return 0
+	}
+	return lipgloss.Height(s)
+}
+
+func takeLastLines(s string, n int) string {
+	if n <= 0 || s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) <= n {
+		return strings.Join(lines, "\n")
+	}
+	return "…" + "\n" + strings.Join(lines[len(lines)-n+1:], "\n")
+}
+
+func (a App) promptContentLineCount() int {
+	lines := strings.Count(a.input, "\n") + 1
+	if lines < 1 {
+		lines = 1
+	}
+	if lines > maxPromptContentLines {
+		lines = maxPromptContentLines
+	}
+	return lines
+}
+
+// promptChromeLines is content lines + inputPanel top/bottom border.
+func (a App) promptChromeLines() int {
+	return a.promptContentLineCount() + 2
+}
+
+// consoleHeightBudget reserves space for fixed chrome so the input never scrolls off.
+func (a App) consoleHeightBudget(width int, includeHeader bool) int {
+	h := a.height
+	if h <= 0 {
+		h = 30
+	}
+
+	reserved := panelChromeLines
+	if includeHeader {
+		reserved += 2 // header row + blank
+	}
+	reserved += a.promptChromeLines()
+
+	if n := len(a.currentSuggestions()); n > 0 {
+		reserved += n + 1
+	}
+	if a.permissionPrompt != nil && a.permissionPrompt.active {
+		// Estimate permission block without depending on full render side effects.
+		reserved += 4
+	}
+
+	// Activity strip is rendered after the console; reserve a compact slice.
+	activityReserve := 0
+	if a.loading || (a.streamingTool != nil && !a.streamingTool.completed) || a.streamBuffer != "" {
+		activityReserve = maxActivityStripLines
+	}
+	reserved += activityReserve
+	reserved += 2 // section spacing / scroll hints
+
+	available := h - reserved
+	if available < minConsoleHeight {
+		available = minConsoleHeight
+	}
+	return available
 }
 
 func (a App) console() string {
-	return a.consoleFor(a.width-8, 12)
+	return a.consoleFor(a.width-8, 12, 0)
 }
 
-func (a App) consoleFor(width int, visibleLines int) string {
+func (a App) consoleFor(width int, visibleLines int, heightBudget int) string {
 	entries := a.log
 
 	if len(entries) == 0 {
 		return ""
 	}
 
-	// Use viewport for scroll management
 	vp := a.viewport
 	if vp == nil {
 		vp = newViewport()
@@ -336,87 +440,166 @@ func (a App) consoleFor(width int, visibleLines int) string {
 	if visibleLines <= 0 {
 		visibleLines = 12
 	}
+	// Prefer a window large enough for the height budget so bottom-up packing
+	// can include more short entries before tall tool cards cap the view.
+	if heightBudget > visibleLines {
+		visibleLines = heightBudget
+	}
 	vp.setVisibleLines(visibleLines)
 	vp.setTotalLines(len(entries))
 
-	start, end := vp.visibleRange()
-
-	visible := entries[start:end]
-
-	var b strings.Builder
-	if start > 0 {
-		b.WriteString(a.styles.scrollHint.Render(fmt.Sprintf("... %d older entries ...\n", start)))
+	renderWidth := max(32, width-4)
+	hintReserve := 0
+	if heightBudget > 0 {
+		hintReserve = 2
+	}
+	bodyBudget := heightBudget
+	if bodyBudget > hintReserve {
+		bodyBudget -= hintReserve
 	}
 
-	renderWidth := max(32, width-4)
+	// Build candidate rows (newest first after scrollPos), then pack bottom-up
+	// so the latest tool/read output stays visible and the input stays put.
+	end := vp.packWindowEnd()
+	type packedRow struct {
+		idx  int
+		text string
+	}
+	var packed []packedRow
+	linesUsed := 0
 
-	for i, entry := range visible {
-		ts := entry.Time.Format("15:04:05")
-		timeStr := a.styles.logTime.Render(ts)
-
-		var marker string
-		switch entry.Kind {
-		case "tool":
-			marker = a.styles.roleTool.Render("tool")
-		case "file":
-			marker = a.styles.roleFile.Render("file")
-		case "system":
-			marker = a.styles.roleSystem.Render("system")
-		case "assistant":
-			marker = a.styles.roleAssist.Render("assistant")
-		case "error":
-			marker = a.styles.error.Render("error")
-		default:
-			marker = a.styles.muted.Render(entry.Kind)
+	for i := end - 1; i >= 0; i-- {
+		row := a.renderLogEntry(entries[i], i, renderWidth)
+		entryLines := visualHeight(row)
+		if entryLines < 1 {
+			entryLines = 1
 		}
-		marker = a.styles.logPrefix.Render(marker)
 
-		entryIdx := start + i
-		rendered := ""
-		if entry.renderedText != "" && entry.renderWidth == renderWidth {
-			rendered = entry.renderedText
-		} else {
-			// Use custom markdown renderer for assistant entries
-			switch entry.Kind {
-			case "assistant":
-				rendered = renderMarkdown(entry.Text, renderWidth, a.styles)
-			case "tool":
-				cardRendered := a.renderToolEntry(entry, renderWidth)
-				if cardRendered != "" {
-					rendered = cardRendered
-				} else {
-					rendered = a.renderer.Render(entry.Text)
-				}
-			default:
-				rendered = a.renderer.Render(entry.Text)
+		if bodyBudget > 0 && linesUsed+entryLines > bodyBudget {
+			remaining := bodyBudget - linesUsed
+			if remaining <= 0 {
+				break
 			}
-			a.log[entryIdx].renderedText = rendered
-			a.log[entryIdx].renderWidth = renderWidth
+			// Keep the newest slice of a tall entry so tool/read tails stay useful.
+			row = takeLastLines(row, remaining)
+			entryLines = visualHeight(row)
+			if entryLines < 1 {
+				break
+			}
+			packed = append(packed, packedRow{idx: i, text: row})
+			linesUsed += entryLines
+			break
 		}
 
-		b.WriteString(fmt.Sprintf("%s %s %s", timeStr, marker, rendered))
+		packed = append(packed, packedRow{idx: i, text: row})
+		linesUsed += entryLines
+	}
+
+	// packed is newest→oldest; reverse for chronological display
+	for i, j := 0, len(packed)-1; i < j; i, j = i+1, j-1 {
+		packed[i], packed[j] = packed[j], packed[i]
+	}
+
+	var b strings.Builder
+	startIdx := 0
+	endIdx := end
+	if len(packed) > 0 {
+		startIdx = packed[0].idx
+		endIdx = packed[len(packed)-1].idx + 1
+	}
+
+	if startIdx > 0 {
+		b.WriteString(a.styles.scrollHint.Render(fmt.Sprintf("... %d older entries ...", startIdx)))
 		b.WriteString("\n")
 	}
 
-	if end < len(entries) {
-		b.WriteString(a.styles.scrollHint.Render(fmt.Sprintf("... %d more entries ...\n", len(entries)-end)))
+	for _, row := range packed {
+		b.WriteString(row.text)
+		if !strings.HasSuffix(row.text, "\n") {
+			b.WriteString("\n")
+		}
 	}
 
-	// Show scroll position indicator
-	scrollIndicator := vp.renderScrollIndicator(renderWidth, a.styles)
-	if scrollIndicator != "" {
+	vp.setRenderedEntries(len(packed))
+
+	if endIdx < len(entries) {
+		b.WriteString(a.styles.scrollHint.Render(fmt.Sprintf("... %d more entries ...", len(entries)-endIdx)))
+		b.WriteString("\n")
+	}
+
+	if scrollIndicator := vp.renderScrollIndicator(renderWidth, a.styles); scrollIndicator != "" {
 		b.WriteString(scrollIndicator)
 		b.WriteString("\n")
 	}
 
-	// Show scroll-to-bottom hint when scrolled up during active streaming
 	if !vp.isAtBottom() && (a.loading || a.streamBuffer != "") {
 		b.WriteString(a.styles.accent.Render("  jump to latest "))
 		b.WriteString(a.styles.muted.Render("(scroll down)"))
 		b.WriteString("\n")
 	}
 
-	return b.String()
+	out := b.String()
+	if heightBudget > 0 && visualHeight(out) > heightBudget {
+		out = takeLastLines(out, heightBudget)
+		if !strings.HasSuffix(out, "\n") {
+			out += "\n"
+		}
+	}
+	return out
+}
+
+// renderLogEntry renders a single log entry with timestamp and role marker.
+func (a App) renderLogEntry(entry logEntry, entryIdx int, renderWidth int) string {
+	ts := entry.Time.Format("15:04:05")
+	timeStr := a.styles.logTime.Render(ts)
+
+	var marker string
+	switch entry.Kind {
+	case "tool":
+		marker = a.styles.roleTool.Render("tool")
+	case "file":
+		marker = a.styles.roleFile.Render("file")
+	case "system":
+		marker = a.styles.roleSystem.Render("system")
+	case "assistant":
+		marker = a.styles.roleAssist.Render("assistant")
+	case "error":
+		marker = a.styles.error.Render("error")
+	default:
+		marker = a.styles.muted.Render(entry.Kind)
+	}
+	marker = a.styles.logPrefix.Render(marker)
+
+	entryRendered := ""
+	if entry.renderedText != "" && entry.renderWidth == renderWidth {
+		entryRendered = entry.renderedText
+	} else {
+		switch entry.Kind {
+		case "assistant":
+			entryRendered = renderMarkdown(entry.Text, renderWidth, a.styles)
+		case "tool":
+			cardRendered := a.renderToolEntry(entry, renderWidth)
+			if cardRendered != "" {
+				entryRendered = cardRendered
+			} else if a.renderer != nil {
+				entryRendered = a.renderer.Render(entry.Text)
+			} else {
+				entryRendered = entry.Text
+			}
+		default:
+			if a.renderer != nil {
+				entryRendered = a.renderer.Render(entry.Text)
+			} else {
+				entryRendered = entry.Text
+			}
+		}
+		if entryIdx >= 0 && entryIdx < len(a.log) {
+			a.log[entryIdx].renderedText = entryRendered
+			a.log[entryIdx].renderWidth = renderWidth
+		}
+	}
+
+	return fmt.Sprintf("%s %s %s", timeStr, marker, entryRendered)
 }
 
 // renderToolEntry renders a tool log entry using the tool card registry.
@@ -549,18 +732,48 @@ func (a App) renderPromptContent(width int) string {
 			return a.styles.prompt.Render(">>> ") + a.styles.input.Render(displayInput) + cursor
 		}
 
-		var b strings.Builder
-		cursorLine := -1
+		// Keep multi-line composer small: show a window around the cursor line.
+		cursorLineIdx := 0
 		cursorLocal := a.cursorPos
 		for i, line := range lines {
-			prefix := a.styles.prompt.Render(">>> ")
-			if i > 0 {
-				prefix = a.styles.prompt.Render("... ")
+			if cursorLocal <= len(line) {
+				cursorLineIdx = i
+				break
 			}
-			if cursorLine == -1 && cursorLocal <= len(line) {
-				cursorLine = i
-				left := line[:cursorLocal]
-				right := line[cursorLocal:]
+			cursorLocal -= len(line) + 1 // +1 for newline
+			if i == len(lines)-1 {
+				cursorLineIdx = i
+			}
+		}
+		startLine := 0
+		if len(lines) > maxPromptContentLines {
+			startLine = cursorLineIdx - maxPromptContentLines + 1
+			if startLine < 0 {
+				startLine = 0
+			}
+			if startLine+maxPromptContentLines > len(lines) {
+				startLine = len(lines) - maxPromptContentLines
+			}
+		}
+		endLine := startLine + maxPromptContentLines
+		if endLine > len(lines) {
+			endLine = len(lines)
+		}
+
+		var b strings.Builder
+		for i := startLine; i < endLine; i++ {
+			line := lines[i]
+			prefix := a.styles.prompt.Render("... ")
+			if i == 0 {
+				prefix = a.styles.prompt.Render(">>> ")
+			}
+			if i == cursorLineIdx {
+				left := line
+				right := ""
+				if cursorLocal <= len(line) {
+					left = line[:cursorLocal]
+					right = line[cursorLocal:]
+				}
 				b.WriteString(prefix)
 				b.WriteString(a.styles.input.Render(left))
 				b.WriteString(cursor)
@@ -569,13 +782,9 @@ func (a App) renderPromptContent(width int) string {
 				b.WriteString(prefix)
 				b.WriteString(a.styles.input.Render(line))
 			}
-			if i < len(lines)-1 {
+			if i < endLine-1 {
 				b.WriteString("\n")
 			}
-		}
-		if cursorLine == -1 {
-			b.WriteString(a.styles.prompt.Render("... "))
-			b.WriteString(cursor)
 		}
 		return b.String()
 	}
@@ -647,14 +856,6 @@ func (a App) loadingText() string {
 		b.WriteString(rippled)
 	} else {
 		b.WriteString(a.styles.accent.Render(currentStep))
-	}
-
-	if a.streamBuffer != "" {
-		preview := truncateStreamPreview(a.streamBuffer, 80)
-		if preview != "" {
-			b.WriteString("\n")
-			b.WriteString(a.styles.muted.Render("  " + preview))
-		}
 	}
 
 	return b.String()

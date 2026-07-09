@@ -41,6 +41,12 @@ func resolveWorkspacePath(root string, input string) (string, error) {
 	}
 	path = filepath.Clean(path)
 
+	// Evaluate symlinks on the deepest existing ancestor to block symlink escapes.
+	resolved, err := evalSymlinksInPath(path)
+	if err == nil {
+		path = resolved
+	}
+
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
 		return "", fmt.Errorf("resolve path %q: %w", input, err)
@@ -49,6 +55,27 @@ func resolveWorkspacePath(root string, input string) (string, error) {
 		return "", fmt.Errorf("path %q is outside workspace", input)
 	}
 	return path, nil
+}
+
+// evalSymlinksInPath walks up from the given path to find the deepest existing
+// ancestor and evaluates its symlinks. This handles paths that may not exist
+// yet (e.g., for file creation) while still blocking symlink escapes.
+func evalSymlinksInPath(path string) (string, error) {
+	// Check if the path itself exists (or is a broken symlink target)
+	if _, err := os.Lstat(path); err == nil {
+		return filepath.EvalSymlinks(path)
+	}
+	// Walk up to find an existing parent
+	dir := filepath.Dir(path)
+	if dir == path || dir == "." || dir == "/" {
+		return path, fmt.Errorf("no existing ancestor found")
+	}
+	resolved, err := evalSymlinksInPath(dir)
+	if err != nil {
+		return path, err
+	}
+	// Reconstruct the path from the resolved parent
+	return filepath.Join(resolved, filepath.Base(path)), nil
 }
 
 func ensureExistingPathInWorkspace(root string, path string) error {

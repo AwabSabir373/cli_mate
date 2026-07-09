@@ -191,7 +191,7 @@ func (t *FileEditTool) Execute(_ context.Context, call Call) (Result, error) {
 	}
 
 	// Write the file
-	if err := os.WriteFile(resolved, []byte(updated), 0o644); err != nil {
+	if err := os.WriteFile(resolved, []byte(updated), 0o600); err != nil {
 		return Result{Error: err.Error()}, err
 	}
 	return Result{Content: formatEditResult(path, editDesc, text, updated)}, nil

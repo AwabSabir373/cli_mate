@@ -11,6 +11,7 @@ import (
 
 	"cli_mate/internal/providers/contracts"
 	"cli_mate/internal/providers/openai_compat"
+	"cli_mate/pkg/crypto"
 	"cli_mate/pkg/httpclient"
 )
 
@@ -66,9 +67,16 @@ func (c *Client) StreamChat(ctx context.Context, req contracts.ChatRequest) (<-c
 		return nil, fmt.Errorf("create custom request: %w", err)
 	}
 
+	// Decrypt API key JIT, immediately before network dispatch
 	if c.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+		keyBytes, keyErr := crypto.DecryptIfNeededBytes(c.apiKey)
+		if keyErr != nil {
+			return nil, fmt.Errorf("decrypt custom api key: %w", keyErr)
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+string(keyBytes))
+		crypto.ZeroBytes(keyBytes)
 	}
+
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
 

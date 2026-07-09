@@ -29,7 +29,7 @@ type BackgroundManager struct {
 
 func NewBackgroundManager(workspaceRoot string) *BackgroundManager {
 	logDir := filepath.Join(workspaceRoot, ".cli_mate", "bg_sessions")
-	os.MkdirAll(logDir, 0755)
+	os.MkdirAll(logDir, 0700)
 	m := &BackgroundManager{
 		sessions: make(map[string]*BackgroundSession),
 		logDir:   logDir,
@@ -61,7 +61,28 @@ func (m *BackgroundManager) runCommand(session *BackgroundSession) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", session.Command)
+	// Parse and validate the command against the whitelist
+	name, args, err := parseCommand(session.Command)
+	if err != nil {
+		m.mu.Lock()
+		session.Status = "failed"
+		session.Error = fmt.Sprintf("command rejected: %v", err)
+		session.Output = ""
+		m.saveSession(session)
+		m.mu.Unlock()
+		return
+	}
+	if err := validateCommand(name); err != nil {
+		m.mu.Lock()
+		session.Status = "failed"
+		session.Error = err.Error()
+		session.Output = ""
+		m.saveSession(session)
+		m.mu.Unlock()
+		return
+	}
+
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = m.logDir
 
 	output, err := cmd.CombinedOutput()

@@ -8,11 +8,13 @@ import (
 
 // viewport handles smooth scrolling and auto-scroll behavior for the transcript.
 type viewport struct {
-	totalLines   int
-	visibleLines int
-	scrollPos    int
-	pinBottom    bool // When true, auto-scrolls to follow new content
-	lastPinnedAt int  // Line count when pin was last set
+	totalLines      int  // total entries
+	visibleLines    int  // preferred max entries to show (before height cap)
+	totalEntries    int  // total entry count
+	renderedEntries int  // entries actually rendered (after height cap)
+	scrollPos       int  // entries scrolled up from bottom (0 = at bottom)
+	pinBottom       bool // When true, auto-scrolls to follow new content
+	lastPinnedAt    int  // Entry count when pin was last set
 }
 
 // newViewport creates a new viewport.
@@ -22,24 +24,25 @@ func newViewport() *viewport {
 	}
 }
 
-// setTotalLines updates the total number of lines in the content.
+// setTotalLines updates the total number of entries in the content.
 func (vp *viewport) setTotalLines(n int) {
-	wasPinned := vp.pinBottom
-
-	// If we were pinned to bottom, stay at bottom
-	if wasPinned {
-		vp.totalLines = n
-		vp.scrollToBottom()
-		return
-	}
-
-	// Track if user manually scrolled up - keep position stable
 	vp.totalLines = n
+	vp.totalEntries = n
+	if vp.pinBottom {
+		vp.scrollToBottom()
+	}
+	vp.clamp()
 }
 
 // setVisibleLines updates the number of visible lines.
 func (vp *viewport) setVisibleLines(n int) {
 	vp.visibleLines = n
+	vp.clamp()
+}
+
+// setRenderedEntries updates the count of entries actually rendered.
+func (vp *viewport) setRenderedEntries(n int) {
+	vp.renderedEntries = n
 	vp.clamp()
 }
 
@@ -50,7 +53,7 @@ func (vp *viewport) scrollToBottom() {
 	vp.lastPinnedAt = vp.totalLines
 }
 
-// scrollUp scrolls up by one line.
+// scrollUp scrolls up by one entry (toward older content).
 func (vp *viewport) scrollUp() {
 	if vp.scrollPos < vp.maxScroll() {
 		vp.scrollPos++
@@ -58,50 +61,102 @@ func (vp *viewport) scrollUp() {
 	}
 }
 
-// scrollDown scrolls down by one line.
+// scrollDown scrolls down by one entry (toward newer content).
 func (vp *viewport) scrollDown() {
 	if vp.scrollPos > 0 {
 		vp.scrollPos--
 	}
-	// If we reached the bottom, re-pin
 	if vp.scrollPos == 0 {
 		vp.pinBottom = true
 		vp.lastPinnedAt = vp.totalLines
 	}
+}
+
+// scrollBy scrolls by delta entries. Positive delta moves toward older content.
+func (vp *viewport) scrollBy(delta int) {
+	if delta == 0 {
+		return
+	}
+	if delta > 0 {
+		for i := 0; i < delta; i++ {
+			vp.scrollUp()
+		}
+		return
+	}
+	for i := 0; i < -delta; i++ {
+		vp.scrollDown()
+	}
+}
+
+// scrollToEntry scrolls so that the given entry index is at the top.
+func (vp *viewport) scrollToEntry(entryIdx int) {
+	visible := vp.effectiveVisible()
+	newPos := vp.totalEntries - entryIdx - visible
+	if newPos < 0 {
+		newPos = 0
+	}
+	if newPos > vp.maxScroll() {
+		newPos = vp.maxScroll()
+	}
+	vp.scrollPos = newPos
+	vp.pinBottom = false
 }
 
 // scrollPageUp scrolls up by a page.
 func (vp *viewport) scrollPageUp() {
-	vp.scrollPos += vp.visibleLines
-	if vp.scrollPos > vp.maxScroll() {
-		vp.scrollPos = vp.maxScroll()
+	page := vp.effectiveVisible()
+	if page < 1 {
+		page = 1
 	}
-	vp.pinBottom = false
+	vp.scrollBy(page)
 }
 
 // scrollPageDown scrolls down by a page.
 func (vp *viewport) scrollPageDown() {
-	vp.scrollPos -= vp.visibleLines
-	if vp.scrollPos < 0 {
-		vp.scrollPos = 0
+	page := vp.effectiveVisible()
+	if page < 1 {
+		page = 1
 	}
-	if vp.scrollPos == 0 {
-		vp.pinBottom = true
-		vp.lastPinnedAt = vp.totalLines
-	}
+	vp.scrollBy(-page)
 }
 
-// visibleRange returns the start and end indices of visible lines.
+// effectiveVisible returns how many entries are currently considered visible.
+func (vp *viewport) effectiveVisible() int {
+	if vp.renderedEntries > 0 {
+		return vp.renderedEntries
+	}
+	if vp.visibleLines > 0 {
+		return vp.visibleLines
+	}
+	return 1
+}
+
+// visibleRange returns the start and end indices of the candidate entry window.
+// Final packing may show fewer entries when individual rows are multi-line.
 func (vp *viewport) visibleRange() (start, end int) {
-	start = vp.totalLines - vp.visibleLines - vp.scrollPos
+	visible := vp.effectiveVisible()
+	start = vp.totalLines - visible - vp.scrollPos
 	if start < 0 {
 		start = 0
 	}
-	end = start + vp.visibleLines
+	end = start + visible
 	if end > vp.totalLines {
 		end = vp.totalLines
 	}
 	return start, end
+}
+
+// packWindow returns the end-exclusive index of the newest entry to consider
+// for bottom-up packing, after applying scrollPos.
+func (vp *viewport) packWindowEnd() int {
+	end := vp.totalLines - vp.scrollPos
+	if end < 0 {
+		end = 0
+	}
+	if end > vp.totalLines {
+		end = vp.totalLines
+	}
+	return end
 }
 
 // isAtBottom returns true if the viewport is showing the latest content.
@@ -147,12 +202,13 @@ func (vp *viewport) clamp() {
 }
 
 // maxScroll returns the maximum scroll position.
+// scrollPos is "how many newest entries to skip" for bottom-up packing, so the
+// wheel can always walk the full log even when only one tall tool card fits.
 func (vp *viewport) maxScroll() int {
-	maxScroll := vp.totalLines - vp.visibleLines
-	if maxScroll < 0 {
-		maxScroll = 0
+	if vp.totalLines <= 1 {
+		return 0
 	}
-	return maxScroll
+	return vp.totalLines - 1
 }
 
 // scrollHint returns a string indicating scroll position.
@@ -174,15 +230,12 @@ func (vp *viewport) scrollHint(styles appStyles) string {
 
 // renderScrollIndicator renders a scroll position indicator bar.
 func (vp *viewport) renderScrollIndicator(_ int, _ appStyles) string {
-	if vp.totalLines <= vp.visibleLines {
+	maxScroll := vp.maxScroll()
+	if maxScroll <= 0 {
 		return ""
 	}
 
-	total := vp.totalLines - vp.visibleLines
-	if total <= 0 {
-		total = 1
-	}
-	pos := float64(vp.scrollPos) / float64(total)
+	pos := float64(vp.scrollPos) / float64(maxScroll)
 	barHeight := 1
 	barPos := int(pos * float64(barHeight))
 

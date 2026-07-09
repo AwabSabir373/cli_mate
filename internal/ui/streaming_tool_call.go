@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const streamingTailLines = 10
+const streamingTailLines = 5
 
 // streamingToolCall represents an in-progress tool call being streamed.
 type streamingToolCall struct {

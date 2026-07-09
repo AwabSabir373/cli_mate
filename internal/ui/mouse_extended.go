@@ -31,7 +31,11 @@ func newMouseHandler() *mouseHandler {
 func (mh *mouseHandler) handleMouse(msg tea.MouseMsg) string {
 	switch m := msg.(type) {
 	case tea.MouseWheelMsg:
-		return "scroll_up"
+		mouse := m.Mouse()
+		if mouse.Button == tea.MouseWheelUp {
+			return "scroll_up"
+		}
+		return "scroll_down"
 
 	case tea.MouseClickMsg:
 		mouse := m.Mouse()

@@ -103,12 +103,12 @@ func (t *ApplyPatchTool) Execute(_ context.Context, call Call) (Result, error) {
 
 		// Ensure parent directory exists
 		dir := filepath.Dir(resolved)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			results = append(results, fmt.Sprintf("FAIL %s: %v", file.Path, err))
 			continue
 		}
 
-		if err := os.WriteFile(resolved, []byte(patched), 0o644); err != nil {
+		if err := os.WriteFile(resolved, []byte(patched), 0o600); err != nil {
 			results = append(results, fmt.Sprintf("FAIL %s: %v", file.Path, err))
 			continue
 		}

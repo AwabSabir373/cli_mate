@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"cli_mate/internal/providers/contracts"
+	"cli_mate/pkg/crypto"
 	"cli_mate/pkg/httpclient"
 )
 
@@ -38,7 +39,14 @@ func (c *Client) StreamChat(ctx context.Context, req contracts.ChatRequest) (<-c
 		return nil, fmt.Errorf("encode gemini request: %w", err)
 	}
 
-	endpoint := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:streamGenerateContent?alt=sse&key=%s", url.PathEscape(req.Model), url.QueryEscape(c.apiKey))
+	// Decrypt API key JIT, immediately before network dispatch
+	keyBytes, keyErr := crypto.DecryptIfNeededBytes(c.apiKey)
+	if keyErr != nil {
+		return nil, fmt.Errorf("decrypt gemini api key: %w", keyErr)
+	}
+	endpoint := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:streamGenerateContent?alt=sse&key=%s", url.PathEscape(req.Model), url.QueryEscape(string(keyBytes)))
+	crypto.ZeroBytes(keyBytes)
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create gemini request: %w", err)

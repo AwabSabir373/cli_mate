@@ -48,7 +48,7 @@ func (t *FileWriteTool) Execute(_ context.Context, call Call) (Result, error) {
 	if err != nil {
 		return Result{Error: err.Error()}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(resolved), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(resolved), 0o700); err != nil {
 		return Result{Error: err.Error()}, err
 	}
 	if _, err := os.Lstat(resolved); err == nil {
@@ -59,7 +59,7 @@ func (t *FileWriteTool) Execute(_ context.Context, call Call) (Result, error) {
 	if err := ensureExistingPathInWorkspace(t.Root, filepath.Dir(resolved)); err != nil {
 		return Result{Error: err.Error()}, err
 	}
-	if err := os.WriteFile(resolved, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(resolved, []byte(content), 0o600); err != nil {
 		return Result{Error: err.Error()}, err
 	}
 	return Result{Content: path}, nil

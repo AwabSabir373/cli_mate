@@ -142,7 +142,7 @@ func TestCodingRunnerRunsSafeNativeToolBatchInParallel(t *testing.T) {
 }
 
 func TestParseToolCallAcceptsUnclosedToolFenceWithCompleteJSON(t *testing.T) {
-	call, ok, err := parseToolCall("thinking\n```cli_mate-tool\n{\"tool\":\"file_read\",\"arguments\":{\"path\":\"src/components/card.tsx\"}}")
+	call, ok, err := parseToolCall(context.Background(), "thinking\n```cli_mate-tool\n{\"tool\":\"file_read\",\"arguments\":{\"path\":\"src/components/card.tsx\"}}")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestParseToolCallAcceptsUnclosedToolFenceWithCompleteJSON(t *testing.T) {
 }
 
 func TestParseToolCallRejectsIncompleteUnclosedToolFence(t *testing.T) {
-	_, ok, err := parseToolCall("thinking\n```cli_mate-tool\n{\"tool\":\"file_read\",\"arguments\":{\"path\":\"src/components")
+	_, ok, err := parseToolCall(context.Background(), "thinking\n```cli_mate-tool\n{\"tool\":\"file_read\",\"arguments\":{\"path\":\"src/components")
 	if !ok {
 		t.Fatal("expected malformed tool call to be recognized")
 	}

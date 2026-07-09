@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"cli_mate/internal/providers/contracts"
+	"cli_mate/pkg/crypto"
 	"cli_mate/pkg/httpclient"
 )
 
@@ -47,7 +48,15 @@ func (c *Client) StreamChat(ctx context.Context, req contracts.ChatRequest) (<-c
 	if err != nil {
 		return nil, fmt.Errorf("create anthropic request: %w", err)
 	}
-	httpReq.Header.Set("x-api-key", c.apiKey)
+
+	// Decrypt API key JIT, immediately before network dispatch
+	keyBytes, keyErr := crypto.DecryptIfNeededBytes(c.apiKey)
+	if keyErr != nil {
+		return nil, fmt.Errorf("decrypt anthropic api key: %w", keyErr)
+	}
+	httpReq.Header.Set("x-api-key", string(keyBytes))
+	crypto.ZeroBytes(keyBytes)
+
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")

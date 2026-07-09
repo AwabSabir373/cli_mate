@@ -26,29 +26,38 @@ type MouseEvent struct {
 func (a *App) HandleMouse(msg tea.MouseMsg) {
 	switch m := msg.(type) {
 	case tea.MouseWheelMsg:
+		if a.viewport == nil {
+			a.viewport = newViewport()
+			a.viewport.setTotalLines(len(a.log))
+		}
 		mouse := m.Mouse()
-		zone := a.mouseHitTest(mouse.X, mouse.Y)
-		if zone == MZoneLog {
-			a.scrollUp()
+		switch mouse.Button {
+		case tea.MouseWheelUp:
+			a.viewport.scrollBy(mouseWheelScrollStep)
+		case tea.MouseWheelDown:
+			a.viewport.scrollBy(-mouseWheelScrollStep)
 		}
 	case tea.MouseClickMsg:
 		mouse := m.Mouse()
-		zone := a.mouseHitTest(mouse.X, mouse.Y)
-		_ = zone
+		_ = a.mouseHitTest(mouse.X, mouse.Y)
 	}
 }
 
 func (a *App) mouseHitTest(_ int, y int) MouseZone {
-	// Input area at bottom (last 2 lines)
-	if y >= a.height-2 {
+	// Input area at bottom (prompt panel)
+	promptLines := a.promptChromeLines()
+	if promptLines < 2 {
+		promptLines = 2
+	}
+	if y >= a.height-promptLines {
 		return MZoneInput
 	}
 
-	// Suggestions area (above input)
-	if y >= a.height-10 && y < a.height-2 {
+	// Suggestions / activity just above input
+	if y >= a.height-promptLines-maxActivityStripLines && y < a.height-promptLines {
 		return MZoneSuggestions
 	}
 
-	// Default: log area
+	// Default: log / transcript area
 	return MZoneLog
 }

@@ -18,7 +18,7 @@ type SQLiteStore struct {
 
 func OpenSQLite(ctx context.Context, path string) (*SQLiteStore, error) {
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0700); err != nil {
 			return nil, err
 		}
 	}
