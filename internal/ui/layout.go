@@ -130,10 +130,7 @@ func chatColumnWidth(width int, sidebarWidth int) int {
 	if sidebarWidth > 0 {
 		chatWidth = width - sidebarWidth - 6
 	}
-	if chatWidth < 40 {
-		chatWidth = 40
-	}
-	return chatWidth
+	return max(1, chatWidth)
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -180,6 +177,10 @@ const (
 	// panelBorderChrome accounts for the outer panel border (top+bottom)
 	// and padding (top+bottom) used by the layout-level border.
 	panelBorderChrome = 4
+	// panelHorizontalInset is the terminal width not available to panel
+	// content: four columns of screen margin, two border columns, and four
+	// padding columns.
+	panelHorizontalInset = 10
 )
 
 // gridLayout describes the rigid 4-zone layout for the current frame.
@@ -221,8 +222,11 @@ func computeGridLayout(width, height int, hasSidebarContent, hasPlanContent bool
 		toolH = toolStreamStripHeightActive
 	}
 
-	// ── Remaining body height: total − header − input − tool ──
-	bodyH := height - headerH - toolH - inputH
+	// ── Remaining body height: total − header − input − tool − panel chrome ──
+	// The outer panel applies a RoundedBorder (2 lines) plus Padding(1,2)
+	// (2 lines), i.e. panelBorderChrome, which must be reserved so the grid
+	// never overflows the terminal vertically.
+	bodyH := height - headerH - toolH - inputH - panelBorderChrome
 	if bodyH < minTranscriptHeight {
 		bodyH = minTranscriptHeight
 	}
@@ -243,25 +247,22 @@ func computeGridLayout(width, height int, hasSidebarContent, hasPlanContent bool
 	case tierMedium:
 		showSidebar = hasSidebarContent
 		if showSidebar {
-			sidebarW = min(sidebarFixedWidth, int(float64(width)*sidebarMaxRatio))
+			sidebarW = clamp(int(float64(width)*sidebarMaxRatio), 20, sidebarFixedWidth)
 		}
 	case tierFull:
 		showSidebar = hasSidebarContent
 		if showSidebar {
-			sidebarW = min(sidebarFixedWidth, int(float64(width)*sidebarMaxRatio))
+			sidebarW = clamp(int(float64(width)*sidebarMaxRatio), 20, sidebarFixedWidth)
 		}
 	}
 
-	// ── Viewport width: total − sidebar (with minimum) ──
-	chatW := width - 4 // default: full width minus panel chrome
+	// ── Viewport width: inner panel content − sidebar − divider ──
+	bodyW := max(1, width-panelHorizontalInset)
+	chatW := bodyW
 	if showSidebar && sidebarW > 0 {
-		chatW = width - sidebarW - 6 // sidebar + divider + padding
+		chatW = bodyW - sidebarW - 3
 	}
-	if chatW < 40 {
-		chatW = 40
-	}
-
-	bodyW := width - 4 // total body width inside the panel
+	chatW = max(1, chatW)
 
 	// ── Transcript height: body minus suggestion/permission chrome ──
 	transcriptH := bodyH - suggestionLines - permissionLines

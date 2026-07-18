@@ -10,32 +10,46 @@ import (
 	"cli_mate/internal/usercommands"
 )
 
+// frameSuggestionCache holds the most recently computed suggestions within a
+// single Update/View cycle. Bubble Tea serialises these calls, so no lock is
+// needed. The cache is invalidated whenever input or inputMode changes.
+type frameSuggestionCache struct {
+	input  string
+	mode   string
+	result []suggestion
+}
+
+var lastSuggestionCache frameSuggestionCache
+
 // Suggestions are derived from the current input only. Input modes that expect
 // raw text, such as API keys and custom models, intentionally disable them.
+// Results are cached per frame to avoid redundant recomputation (currentSuggestions
+// is called 3-6 times per frame with identical input).
 func (a App) currentSuggestions() []suggestion {
 	if a.inputMode == "api_key" || a.inputMode == "custom_model" || a.inputMode == "finder" {
 		return nil
 	}
 
 	input := strings.TrimSpace(a.input)
-	if isProviderInput(input) {
-		return providerSuggestions(providerQuery(input))
-	}
-	if isModelInput(input) {
-		return modelSuggestions(a.activeProfile().Provider, modelQuery(input))
-	}
-	if isThemeInput(input) {
-		return themeSuggestions(themeQuery(input))
-	}
-	if strings.HasPrefix(input, "/") {
-		return commandSuggestions(strings.TrimPrefix(input, "/"), a.userCommands)
+	if input == lastSuggestionCache.input && a.inputMode == lastSuggestionCache.mode {
+		return lastSuggestionCache.result
 	}
 
-	token, ok := activeMentionToken(a.input)
-	if ok {
-		return fileSuggestions(a.files, strings.TrimPrefix(token, "@"))
+	var result []suggestion
+	if isProviderInput(input) {
+		result = providerSuggestions(providerQuery(input))
+	} else if isModelInput(input) {
+		result = modelSuggestions(a.activeProfile().Provider, modelQuery(input))
+	} else if isThemeInput(input) {
+		result = themeSuggestions(themeQuery(input))
+	} else if strings.HasPrefix(input, "/") {
+		result = commandSuggestions(strings.TrimPrefix(input, "/"), a.userCommands)
+	} else if token, ok := activeMentionToken(a.input); ok {
+		result = fileSuggestions(a.files, strings.TrimPrefix(token, "@"))
 	}
-	return nil
+
+	lastSuggestionCache = frameSuggestionCache{input: input, mode: a.inputMode, result: result}
+	return result
 }
 
 func commandSuggestions(prefix string, userCmds []usercommands.Command) []suggestion {
@@ -45,29 +59,19 @@ func commandSuggestions(prefix string, userCmds []usercommands.Command) []sugges
 		{Value: "/setup", Label: "/setup", Description: "run the interactive setup wizard"},
 		{Value: "/resume", Label: "/resume", Description: "resume a previous session"},
 		{Value: "/mcp", Label: "/mcp", Description: "manage MCP servers"},
-		{Value: "/mcp_server", Label: "/mcp_server", Description: "open custom mcp"},
 		{Value: "/prs", Label: "/prs", Description: "show pull request status"},
-		{Value: "/spec", Label: "/spec", Description: "start specification-driven development"},
 		{Value: "/doctor", Label: "/doctor", Description: "run system diagnostics"},
 		{Value: "/attach ", Label: "/attach", Description: "attach an image to the conversation"},
 		{Value: "/session", Label: "/session", Description: "open session controls (rename/export/rewind)"},
-		{Value: "/output", Label: "/output", Description: "view command output history"},
 		{Value: "/provider ", Label: "/provider", Description: "choose one active provider"},
 		{Value: "/model ", Label: "/model", Description: "choose model for active provider"},
 		{Value: "/theme ", Label: "/theme", Description: "choose terminal theme"},
-		{Value: "/api-key ", Label: "/api-key", Description: "set or update API key"},
-		{Value: "/max-tokens ", Label: "/max-tokens", Description: "set custom context level limit"},
-		{Value: "/base-url ", Label: "/base-url", Description: "set local provider URL"},
-		{Value: "/connect", Label: "/connect", Description: "validate active provider"},
-		{Value: "/approve", Label: "/approve", Description: "toggle auto-approve for tool execution"},
+		{Value: "/permissions", Label: "/permissions", Description: "toggle tool auto-approval"},
 		{Value: "/status", Label: "/status", Description: "show configuration"},
 		{Value: "/copy", Label: "/copy", Description: "copy last AI response to clipboard"},
 		{Value: "/clear", Label: "/clear", Description: "clear the console"},
-		{Value: "/review", Label: "/review", Description: "review code changes"},
-		{Value: "/diff ", Label: "/diff", Description: "show git diff"},
-		{Value: "/commit ", Label: "/commit", Description: "create a git commit"},
-		{Value: "/compact", Label: "/compact", Description: "clean temporary files"},
-		{Value: "/skills", Label: "/skills", Description: "list available skills"},
+		{Value: "/compact", Label: "/compact", Description: "summarize older messages"},
+		{Value: "/exit", Label: "/exit", Description: "quit cli_mate"},
 	}
 
 	// Add user commands
@@ -199,11 +203,15 @@ func fileSuggestions(files []string, prefix string) []suggestion {
 	prefix = filepath.ToSlash(strings.ToLower(prefix))
 	var matches []suggestion
 	for _, file := range files {
+		// Mentions are prompt syntax, not native OS paths. Always expose them
+		// with forward slashes so a selection works consistently on Windows,
+		// macOS, and Linux.
+		file = filepath.ToSlash(file)
 		lower := strings.ToLower(file)
 		if prefix == "" || strings.HasPrefix(lower, prefix) || strings.Contains(lower, prefix) {
-			kind := "file"
+			kind := "FILE"
 			if strings.HasSuffix(file, "/") {
-				kind = "dir"
+				kind = "DIR"
 			}
 			matches = append(matches, suggestion{
 				Value:       file,

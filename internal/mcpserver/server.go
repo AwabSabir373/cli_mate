@@ -11,94 +11,81 @@ import (
 	"sync"
 )
 
-// Server handles the MCP JSON-RPC 2.0 communication over stdio.
+const protocolVersion = "2024-11-05"
+
+// Server handles newline-delimited MCP JSON-RPC 2.0 over stdio.
 type Server struct {
 	reader *bufio.Reader
 	writer io.Writer
 	mu     sync.Mutex
 	tools  map[string]ToolHandler
 
-	// cancellation map
-	activeReqs   map[int]context.CancelFunc
+	activeReqs   map[string]context.CancelFunc
 	activeReqsMu sync.Mutex
-
-	// worker pool
-	workQueue chan *jsonrpcRequest
+	workQueue    chan *jsonrpcRequest
+	workerWG     sync.WaitGroup
 }
 
-// ToolHandler represents a function that handles a specific MCP tool call.
 type ToolHandler func(ctx context.Context, params map[string]any) (any, error)
 
-// NewServer creates a new MCP server with a bounded worker pool.
-func NewServer() *Server {
+func NewServer() *Server { return newServer(os.Stdin, os.Stdout) }
+
+func newServer(reader io.Reader, writer io.Writer) *Server {
 	s := &Server{
-		reader:     bufio.NewReader(os.Stdin),
-		writer:     os.Stdout,
+		reader:     bufio.NewReader(reader),
+		writer:     writer,
 		tools:      make(map[string]ToolHandler),
-		activeReqs: make(map[int]context.CancelFunc),
+		activeReqs: make(map[string]context.CancelFunc),
 		workQueue:  make(chan *jsonrpcRequest, 100),
 	}
-
-	// Start bounded worker pool (10 concurrent requests)
 	for i := 0; i < 10; i++ {
+		s.workerWG.Add(1)
 		go s.worker()
 	}
-
 	return s
 }
 
-// RegisterTool registers a new tool handler.
-func (s *Server) RegisterTool(name string, handler ToolHandler) {
-	s.tools[name] = handler
-}
+func (s *Server) RegisterTool(name string, handler ToolHandler) { s.tools[name] = handler }
 
-// Start begins listening for requests on stdin.
 func (s *Server) Start() error {
 	for {
 		req, err := s.readRequest()
 		if err != nil {
 			if err == io.EOF {
+				close(s.workQueue)
+				s.workerWG.Wait()
 				return nil
 			}
-			return fmt.Errorf("read error: %w", err)
-		}
-
-		// Handle notifications immediately on the read goroutine
-		if req.ID == nil {
-			if req.Method == "notifications/cancelled" {
-				var cancelParams struct {
-					RequestID int `json:"requestId"`
-				}
-				if json.Unmarshal(req.Params, &cancelParams) == nil {
-					s.cancelRequest(cancelParams.RequestID)
-				}
-			}
+			s.writeResponse(nil, nil, &jsonrpcError{Code: -32700, Message: err.Error()})
 			continue
 		}
-
-		// Push requests to the bounded worker pool
+		if req.ID == nil {
+			s.handleNotification(req)
+			continue
+		}
 		s.workQueue <- req
 	}
 }
 
 func (s *Server) worker() {
+	defer s.workerWG.Done()
 	for req := range s.workQueue {
 		s.handleRequest(req)
 	}
 }
 
 type jsonrpcRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      *int            `json:"id"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
+	JSONRPC string           `json:"jsonrpc"`
+	ID      *json.RawMessage `json:"id,omitempty"`
+	Method  string           `json:"method"`
+	Params  json.RawMessage  `json:"params,omitempty"`
 }
 
 type jsonrpcResponse struct {
-	JSONRPC string        `json:"jsonrpc"`
-	ID      *int          `json:"id"`
-	Result  any           `json:"result,omitempty"`
-	Error   *jsonrpcError `json:"error,omitempty"`
+	JSONRPC string           `json:"jsonrpc"`
+	ID      *json.RawMessage `json:"id"`
+	Result  any              `json:"result,omitempty"`
+	Error   *jsonrpcError    `json:"error,omitempty"`
 }
 
 type jsonrpcError struct {
@@ -107,143 +94,117 @@ type jsonrpcError struct {
 }
 
 func (s *Server) readRequest() (*jsonrpcRequest, error) {
-	contentLength := -1
 	for {
-		line, err := s.reader.ReadString('\n')
-		if err != nil {
+		line, err := s.reader.ReadBytes('\n')
+		if err != nil && len(line) == 0 {
 			return nil, err
 		}
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			break
+		line = []byte(strings.TrimSpace(string(line)))
+		if len(line) == 0 {
+			if err != nil {
+				return nil, err
+			}
+			continue
 		}
-		var length int
-		if _, err := fmt.Sscanf(line, "Content-Length: %d", &length); err == nil {
-			contentLength = length
+		var req jsonrpcRequest
+		if decodeErr := json.Unmarshal(line, &req); decodeErr != nil {
+			return nil, fmt.Errorf("decode JSON-RPC message: %w", decodeErr)
 		}
+		if req.JSONRPC != "2.0" || req.Method == "" {
+			return nil, fmt.Errorf("invalid JSON-RPC request")
+		}
+		return &req, nil
 	}
-
-	if contentLength <= 0 {
-		return nil, fmt.Errorf("missing Content-Length header")
-	}
-
-	body := make([]byte, contentLength)
-	if _, err := io.ReadFull(s.reader, body); err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-
-	var req jsonrpcRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, fmt.Errorf("decode request: %w", err)
-	}
-	return &req, nil
 }
 
-func (s *Server) cancelRequest(id int) {
+func requestKey(id json.RawMessage) string { return string(id) }
+
+func (s *Server) handleNotification(req *jsonrpcRequest) {
+	if req.Method != "notifications/cancelled" {
+		return
+	}
+	var params struct {
+		RequestID json.RawMessage `json:"requestId"`
+	}
+	if json.Unmarshal(req.Params, &params) == nil {
+		s.cancelRequest(requestKey(params.RequestID))
+	}
+}
+
+func (s *Server) cancelRequest(key string) {
 	s.activeReqsMu.Lock()
-	defer s.activeReqsMu.Unlock()
-	if cancel, exists := s.activeReqs[id]; exists {
+	cancel := s.activeReqs[key]
+	delete(s.activeReqs, key)
+	s.activeReqsMu.Unlock()
+	if cancel != nil {
 		cancel()
-		delete(s.activeReqs, id)
 	}
 }
 
 func (s *Server) handleRequest(req *jsonrpcRequest) {
-	if req.ID == nil {
-		return
-	}
-
-	reqID := *req.ID
+	key := requestKey(*req.ID)
 	ctx, cancel := context.WithCancel(context.Background())
-
 	s.activeReqsMu.Lock()
-	s.activeReqs[reqID] = cancel
+	s.activeReqs[key] = cancel
 	s.activeReqsMu.Unlock()
-
-	defer func() {
-		s.cancelRequest(reqID)
-	}()
-
-	var result any
-	var err error
+	defer s.cancelRequest(key)
 
 	switch req.Method {
 	case "initialize":
-		result = map[string]any{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]any{},
-			"serverInfo": map[string]any{
-				"name":    "cli_mcp",
-				"version": "1.1.0",
-			},
-		}
+		s.writeResponse(req.ID, map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
+			"serverInfo":      map[string]any{"name": "cli_mcp", "version": "1.2.0"},
+		}, nil)
+	case "ping":
+		s.writeResponse(req.ID, map[string]any{}, nil)
 	case "tools/list":
-		result = map[string]any{
-			"tools": GetToolDefinitions(),
-		}
+		s.writeResponse(req.ID, map[string]any{"tools": GetToolDefinitions()}, nil)
 	case "tools/call":
-		var params struct {
-			Name      string         `json:"name"`
-			Arguments map[string]any `json:"arguments"`
-		}
-		if e := json.Unmarshal(req.Params, &params); e != nil {
-			err = fmt.Errorf("invalid params: %w", e)
-		} else {
-			handler, ok := s.tools[params.Name]
-			if !ok {
-				err = fmt.Errorf("unknown tool: %s", params.Name)
-			} else {
-				content, e := handler(ctx, params.Arguments)
-				if e != nil {
-					result = map[string]any{
-						"isError": true,
-						"content": []map[string]any{
-							{
-								"type": "text",
-								"text": e.Error(),
-							},
-						},
-					}
-				} else {
-					result = map[string]any{
-						"content": []map[string]any{
-							{
-								"type": "text",
-								"text": fmt.Sprintf("%v", content),
-							},
-						},
-					}
-				}
-			}
-		}
+		s.handleToolCall(ctx, req)
 	default:
-		err = fmt.Errorf("method not found")
-	}
-
-	if result != nil && err == nil {
-		s.writeResponse(req.ID, result, nil)
-	} else if err != nil {
-		s.writeResponse(req.ID, nil, &jsonrpcError{Code: -32601, Message: err.Error()})
+		s.writeResponse(req.ID, nil, &jsonrpcError{Code: -32601, Message: "method not found: " + req.Method})
 	}
 }
 
-func (s *Server) writeResponse(id *int, result any, rpcErr *jsonrpcError) {
-	resp := jsonrpcResponse{
-		JSONRPC: "2.0",
-		ID:      id,
-		Result:  result,
-		Error:   rpcErr,
+func (s *Server) handleToolCall(ctx context.Context, req *jsonrpcRequest) {
+	var params struct {
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments"`
 	}
+	if err := json.Unmarshal(req.Params, &params); err != nil || params.Name == "" {
+		s.writeResponse(req.ID, nil, &jsonrpcError{Code: -32602, Message: "invalid tools/call parameters"})
+		return
+	}
+	handler, ok := s.tools[params.Name]
+	if !ok {
+		s.writeResponse(req.ID, nil, &jsonrpcError{Code: -32602, Message: "unknown tool: " + params.Name})
+		return
+	}
+	content, err := executeToolHandler(ctx, handler, params.Arguments)
+	result := map[string]any{"content": []map[string]any{{"type": "text", "text": fmt.Sprint(content)}}}
+	if err != nil {
+		result["isError"] = true
+		result["content"] = []map[string]any{{"type": "text", "text": err.Error()}}
+	}
+	s.writeResponse(req.ID, result, nil)
+}
 
-	data, err := json.Marshal(resp)
+func executeToolHandler(ctx context.Context, handler ToolHandler, params map[string]any) (content any, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("tool handler panic: %v", recovered)
+		}
+	}()
+	return handler(ctx, params)
+}
+
+func (s *Server) writeResponse(id *json.RawMessage, result any, rpcErr *jsonrpcError) {
+	data, err := json.Marshal(jsonrpcResponse{JSONRPC: "2.0", ID: id, Result: result, Error: rpcErr})
 	if err != nil {
 		return
 	}
-
-	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(data))
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, _ = s.writer.Write([]byte(header))
-	_, _ = s.writer.Write(data)
+	_, _ = s.writer.Write(append(data, '\n'))
 }

@@ -1,140 +1,160 @@
 # cli_mate
 
-Terminal-first AI coding agent. Chat with your codebase, edit files, run commands — all from one terminal.
+`cli_mate` is a terminal-first AI coding agent written in Go. It provides a guided Bubble Tea interface for understanding repositories, editing files, running commands, reviewing changes, and connecting to MCP tools without turning normal use into a configuration-heavy workflow.
+
+## Highlights
+
+- Guided provider setup: choose a provider, enter credentials when required, choose a model, and start working.
+- Coding-focused terminal UI with a teal visual system, streaming responses, tool activity, file changes, inline diffs, and interrupt support.
+- File mentions with `@` and discoverable slash commands with `/`.
+- Targeted file reads, writes, edits, search, shell execution, and verification tools.
+- Built-in MCP server plus support for external MCP servers.
+- Semantic repository tools for Go and multiple other languages.
+- Persistent sessions, profiles, themes, permissions, context compaction, and diagnostics.
+- One-shot operation for scripts and non-interactive workflows.
 
 ## Install
 
+### GitHub release
+
+Linux amd64:
+
 ```bash
-# From source
-go install ./cmd/cli_mate
-
-# From release (download from GitHub Releases)
-# Linux/macOS
-curl -sSL https://github.com/cli_mate/cli_mate/releases/latest/download/cli_mate_linux_amd64.tar.gz | tar xz
-sudo mv cli_mate /usr/local/bin/
-
-# Windows (PowerShell)
-# Download cli_mate_windows_amd64.zip from Releases, extract, add to PATH
+curl -sSL https://github.com/AwabSabir373/cli_mate/releases/latest/download/cli_mate_linux_amd64.tar.gz | tar xz
+sudo install cli_mate /usr/local/bin/cli_mate
 ```
 
-## Quick Start
+macOS Apple Silicon:
 
 ```bash
-# Launch interactive TUI
+curl -sSL https://github.com/AwabSabir373/cli_mate/releases/latest/download/cli_mate_darwin_arm64.tar.gz | tar xz
+sudo install cli_mate /usr/local/bin/cli_mate
+```
+
+Windows amd64: download `cli_mate_windows_amd64.zip` from [GitHub Releases](https://github.com/AwabSabir373/cli_mate/releases), extract `cli_mate.exe`, and add its directory to `PATH`.
+
+### Build from source
+
+Go 1.26.5 or newer is required.
+
+```bash
+git clone https://github.com/AwabSabir373/cli_mate.git
+cd cli_mate
+go build -o cli_mate ./cmd/cli_mate
+```
+
+## Quick start
+
+```bash
+# Open the interactive coding interface in the current directory
 cli_mate
 
-# One-shot prompt
-cli_mate run "explain the main function in cmd/cli_mate/main.go"
+# Work in a specific repository
+cli_mate --workspace /path/to/project
 
-# Pipe input
-cat main.go | cli_mate run "find bugs in this code"
+# Run a single prompt without opening the TUI
+cli_mate run "explain cmd/cli_mate/main.go"
 
-# List past sessions
+# Supply piped context
+cat main.go | cli_mate run "review this code for correctness"
+
+# List saved sessions
 cli_mate sessions
 ```
 
-## Provider Setup
+On first launch:
 
-Launch `cli_mate` and use slash commands:
+1. Choose a provider.
+2. Enter an API key if the provider requires one.
+3. Choose a model.
+4. Connect and start chatting.
 
-1. `/provider` — choose a provider (openai, anthropic, openrouter, gemini, groq, ollama)
-2. Paste your API key (not needed for local providers like Ollama)
-3. `/model` — select a model
-4. Start chatting
+Use `@filename` to mention repository files. Type `/` to browse commands, press `Enter` to accept the highlighted suggestion, press `Esc` to step back or interrupt, and press `Ctrl+C` to quit.
 
-### Supported Providers
+## Providers
 
-| Provider | API Key | Models |
-|----------|---------|--------|
-| OpenAI | Required | gpt-4.1, gpt-4.1-mini, gpt-4o, o3-mini |
-| Anthropic | Required | claude-sonnet-4, claude-3.5-sonnet, claude-3.5-haiku |
-| OpenRouter | Required | 100+ models via single key |
-| Gemini | Required | gemini-2.5-flash, gemini-2.5-pro |
-| Groq | Required | llama-3.3-70b, mixtral-8x7b |
-| Ollama | Not needed | Any local model |
+`cli_mate` includes adapters for OpenAI, Anthropic, OpenRouter, Gemini, Groq, Mistral, DeepSeek, xAI, Ollama, LM Studio, and OpenAI-compatible endpoints. Available model names are loaded through the selected provider rather than being hardcoded in this document.
 
-### Environment Variables
+Provider credentials and model selection are handled by the guided setup flow:
+
+```text
+/setup
+/provider
+/model
+```
+
+## Main commands
+
+| Command | Purpose |
+| --- | --- |
+| `/setup` | Open guided provider setup |
+| `/provider` | Choose the active provider |
+| `/model` | Choose the active model |
+| `/open` | Open or mention a repository file |
+| `/mcp` | Manage MCP servers and connections |
+| `/resume` | Resume a saved session |
+| `/permissions` | Review tool approval behavior |
+| `/theme` | Select a terminal theme |
+| `/doctor` | Diagnose configuration and connectivity |
+| `/compact` | Compact the active conversation context |
+| `/status` | Show current runtime status |
+| `/help` | Show all available commands and keys |
+| `/exit` | Exit `cli_mate` |
+
+## MCP
+
+The built-in MCP server communicates over standard input/output and can be started with:
 
 ```bash
-export CLI_MATE_PROFILES_DEFAULT_PROVIDER=openai
-export CLI_MATE_PROFILES_DEFAULT_MODEL=gpt-4.1
-export CLI_MATE_PROFILES_DEFAULT_APIKEY=sk-...
+cli_mate mcp-server
 ```
 
-## Usage
+Example client configuration:
 
-### Interactive Mode
+```json
+{
+  "mcpServers": {
+    "cli_mate": {
+      "command": "cli_mate",
+      "args": ["mcp-server"]
+    }
+  }
+}
+```
+
+The server supports repository navigation, text and semantic search, symbol inspection, targeted edits, and other coding-agent operations. Responses are designed to return focused context instead of unnecessarily large file dumps.
+
+External MCP servers can be added and managed from `/mcp` inside the TUI.
+
+## Development and verification
+
+The repository follows Clean Architecture. CLI entrypoints live under `cmd`, while agent orchestration, providers, tools, storage, configuration, and UI implementations live in their respective `internal` packages.
+
+Run the complete local verification gate before submitting changes:
 
 ```bash
-cli_mate                    # Launch TUI
-cli_mate -p work            # Use "work" profile
-cli_mate --config ./cli_mate.yaml  # Custom config file
+gofmt -w .
+go test -count=1 ./...
+go vet ./...
+go build ./cmd/cli_mate ./cmd/cli_mcp
+go mod verify
 ```
 
-### Commands
+Release validation additionally runs race-enabled tests, GolangCI-Lint, Go vulnerability scanning, and GoReleaser configuration checks in CI.
 
-| Command | Description |
-|---------|-------------|
-| `/provider` | Choose provider |
-| `/model` | Choose model |
-| `/theme` | Choose theme (midnight, matrix, paper, mono) |
-| `/max-tokens` | Set context limit |
-| `/base-url` | Set provider URL (for Ollama) |
-| `/connect` | Validate and connect |
-| `/status` | Show configuration |
-| `/clear` | Clear console |
-| `/help` | Show commands |
+## Release process
 
-### File Mentions
-
-Type `@` followed by a filename to include file contents in your prompt:
-
-```
-@main.go explain this function
-```
-
-### Tools
-
-The agent can:
-- **Read files** — inspect your codebase
-- **Write files** — create new files
-- **Edit files** — make targeted changes
-- **Run shell** — execute commands (tests, builds, formatting)
-- **Glob** — search for files by pattern
-- **Grep** — search file contents by regex
-
-## Configuration
-
-Config file: `~/.config/cli_mate/cli_mate.yaml`
-
-```yaml
-activeProfile: default
-profiles:
-  default:
-    provider: openai
-    model: gpt-4.1
-    apiKey: sk-...
-    maxTokens: 128000
-    reserveTokens: 4096
-    temperature: 0.2
-  local:
-    provider: ollama
-    model: llama3.1
-    baseURL: http://localhost:11434
-log:
-  level: info
-storage:
-  path: cli_mate.db
-http:
-  timeout: 30s
-  retries: 3
-```
-
-## Build
+Tags matching `v*` trigger the release workflow. A successful release publishes Linux and macOS archives, a Windows zip, checksums, and multi-architecture container images to GitHub Container Registry.
 
 ```bash
-go build -ldflags "-X main.version=1.0.0 -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" ./cmd/cli_mate
+git add -A
+git commit -m "release: prepare cli_mate v0.1.0"
+git push origin main
+git tag v0.1.0
+git push origin v0.1.0
 ```
+
+Before tagging, confirm the working tree contains only the intended release changes and that CI is green.
 
 ## License
 

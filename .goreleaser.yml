@@ -22,11 +22,13 @@ builds:
         goarch: arm64
 
 archives:
-  - format: tar.gz
-    name_template: "cli_mate_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - formats:
+      - tar.gz
+    name_template: "cli_mate_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
 
 checksum:
   name_template: "checksums.txt"
@@ -39,9 +41,4 @@ changelog:
       - "^test:"
       - "^ci:"
       - "^chore:"
-
-release:
-  github:
-    owner: cli_mate
-    name: cli_mate
 

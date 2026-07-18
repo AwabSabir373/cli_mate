@@ -250,6 +250,9 @@ func runChatAsync(ctx context.Context, app *App, profile config.Profile, provide
 	}()
 
 	runner := agent.NewCodingRunner(provider, instructions, toolset, workspaceRoot)
+	for _, client := range mcpClients {
+		runner.AddTools(client.RemoteTools())
+	}
 	runner.EnableSpecialists()
 	runner.Style = app.responseStyle
 	if profile.MaxToolIterations > 0 {

@@ -48,11 +48,6 @@ func (a App) View() tea.View {
 			return wrap(o)
 		}
 	}
-	if a.startup != nil && a.startup.isVisible() {
-		if o := renderStartup(a.startup, a.styles, a.width); o != "" {
-			return wrap(o)
-		}
-	}
 	if a.sessionCtrls != nil && a.sessionCtrls.isVisible() {
 		if o := renderSessionControls(a.sessionCtrls, a.styles, a.width, a.messages); o != "" {
 			return wrap(o)
@@ -74,7 +69,7 @@ func (a App) View() tea.View {
 		}
 	}
 	if a.picker != nil && a.picker.isVisible() {
-		if o := renderPicker(a.picker, a.styles, a.width); o != "" {
+		if o := renderPicker(a.picker, a.styles, a.width, a.height); o != "" {
 			return wrap(o)
 		}
 	}
@@ -114,17 +109,23 @@ func (a App) View() tea.View {
 		input,
 	)
 
-	return wrap(a.styles.panel.Width(a.width - 4).Render(content))
+	return wrap(a.renderMainPanel(content))
+}
+
+func (a App) renderMainPanel(content string) string {
+	width := max(1, a.width-4)
+	height := max(1, a.height-2)
+	return a.styles.panel.Width(width).Height(height).Render(content)
 }
 
 func stylesVerticalDivider(styles appStyles) string {
-	return styles.muted.Render(" | ")
+	return styles.divider.Render(" │ ")
 }
 
 // computeCurrentGrid computes the rigid grid layout for the current frame.
 // All dimensions are strictly derived from the terminal size downward.
 func (a App) computeCurrentGrid() gridLayout {
-	hasSidebar := a.sidebar != nil && a.sidebar.hasContent()
+	hasSidebar := a.sidebar != nil && a.sidebar.IsVisible() && a.sidebar.hasContent()
 	hasPlan := a.planPanel != nil && a.planPanel.IsVisible()
 
 	suggestions := a.suggestionLinesForGrid()
@@ -132,7 +133,7 @@ func (a App) computeCurrentGrid() gridLayout {
 	toolActive := a.loading || a.hasActiveStreamingTool()
 
 	return computeGridLayout(
-		a.width, a.height,
+		a.width, max(1, a.height-2),
 		hasSidebar, hasPlan,
 		suggestions, permissions,
 		toolActive,
@@ -142,15 +143,9 @@ func (a App) computeCurrentGrid() gridLayout {
 // suggestionLinesForGrid returns the number of lines the suggestion list
 // occupies when visible, 0 otherwise.
 func (a App) suggestionLinesForGrid() int {
-	items := a.currentSuggestions()
-	if len(items) == 0 {
-		return 0
-	}
-	n := len(items)
-	if n > 12 {
-		n = 12
-	}
-	return n // each suggestion is one line
+	// Suggestions are rendered as a centered dialog inside the body instead of
+	// consuming transcript rows above it.
+	return 0
 }
 
 // permissionLinesForGrid returns the number of lines the permission prompt
@@ -164,10 +159,11 @@ func (a App) permissionLinesForGrid() int {
 
 // renderHeaderForGrid renders the single-line header row for the grid.
 func (a App) renderHeaderForGrid(grid gridLayout) string {
-	return a.renderHeader(layoutConfig{
+	header := a.renderHeader(layoutConfig{
 		Tier:            grid.Tier,
 		ShowHeaderPills: grid.ShowHeaderPills,
 	})
+	return fitStyledLine(header, grid.BodyWidth)
 }
 
 // renderBodyZone renders Zone 2: sidebar + main transcript viewport side by side.
@@ -191,17 +187,11 @@ func (a App) renderBodyZone(grid gridLayout) string {
 
 // renderChatColumnForGrid renders the main chat column for the sidebar layout.
 func (a App) renderChatColumnForGrid(grid gridLayout) string {
-	var b strings.Builder
-
-	// Header
-	b.WriteString(a.renderHeaderForGrid(grid))
-	b.WriteString("\n\n")
-
-	// Suggestions (if any)
 	if len(a.currentSuggestions()) > 0 {
-		b.WriteString(a.renderSuggestionsFor(grid.ChatWidth))
-		b.WriteString("\n")
+		return a.renderSuggestionDialog(grid.ChatWidth, grid.BodyHeight)
 	}
+
+	var b strings.Builder
 
 	// Permission prompt (if any)
 	if a.permissionPrompt != nil && a.permissionPrompt.active {
@@ -217,13 +207,11 @@ func (a App) renderChatColumnForGrid(grid gridLayout) string {
 
 // renderMainTranscriptForGrid renders the main transcript area without sidebar.
 func (a App) renderMainTranscriptForGrid(grid gridLayout) string {
-	var b strings.Builder
-
-	// Suggestions (if any)
 	if len(a.currentSuggestions()) > 0 {
-		b.WriteString(a.renderSuggestionsFor(grid.ChatWidth))
-		b.WriteString("\n")
+		return a.renderSuggestionDialog(grid.ChatWidth, grid.BodyHeight)
 	}
+
+	var b strings.Builder
 
 	// Permission prompt (if any)
 	if a.permissionPrompt != nil && a.permissionPrompt.active {
@@ -234,14 +222,19 @@ func (a App) renderMainTranscriptForGrid(grid gridLayout) string {
 	// Transcript viewport — fills the remaining grid height
 	b.WriteString(a.consoleFor(grid.ChatWidth, grid.TranscriptHeight, grid.TranscriptHeight))
 
-	return b.String()
+	// Render the complete body zone so the footer remains at the bottom and
+	// blank rows overwrite any text left behind by the previous frame.
+	return lipgloss.NewStyle().
+		Width(max(1, grid.ChatWidth)).
+		Height(max(1, grid.BodyHeight)).
+		Render(b.String())
 }
 
 // renderToolExecutionPane renders Zone 3: the tool stream strip.
 // This is a compact 2-line status bar statically placed above the input box.
 // The main tool output flows inline in the transcript viewport.
 func (a App) renderToolExecutionPane(grid gridLayout) string {
-	if grid.ToolPaneHeight == 0 {
+	if grid.ToolPaneHeight == 0 || a.loading || a.pending {
 		return ""
 	}
 
@@ -294,43 +287,10 @@ func (a App) renderToolExecutionPane(grid gridLayout) string {
 
 // renderInputZone renders Zone 4: the user input box, permanently locked at the bottom.
 func (a App) renderInputZone(grid gridLayout) string {
+	if a.loading || a.pending {
+		return a.renderRunFooter(grid.ChatWidth)
+	}
 	return a.renderPromptFor(grid.ChatWidth)
-}
-
-func (a App) renderPanelContent(header string, layout layoutConfig) string {
-	grid := a.computeCurrentGrid()
-
-	var b strings.Builder
-	b.WriteString(header)
-	b.WriteString("\n\n")
-
-	// Chat transcript — flexible region above fixed chrome.
-	// Use TranscriptHeight as the height budget so the transcript never
-	// overflows the grid's allocated space.
-	if a.hasTranscriptContent() {
-		b.WriteString(a.consoleFor(layout.ChatWidth, grid.TranscriptHeight, grid.TranscriptHeight))
-		b.WriteString("\n")
-	}
-
-	// Suggestions
-	if len(a.currentSuggestions()) > 0 {
-		b.WriteString(a.renderSuggestionsFor(layout.ChatWidth))
-		b.WriteString("\n")
-	}
-
-	// Permission prompt
-	if a.permissionPrompt != nil && a.permissionPrompt.active {
-		b.WriteString(a.permissionPrompt.render(a.styles, layout.ChatWidth))
-		b.WriteString("\n\n")
-	}
-
-	// Activity (tools / loading) stays compact above the input
-	b.WriteString(a.renderActivityStrip(layout.ChatWidth))
-
-	// Input stays a small fixed footer portion
-	b.WriteString(a.renderPromptFor(layout.ChatWidth))
-
-	return a.styles.panel.Width(a.width - 4).Render(b.String())
 }
 
 func (a App) renderHeader(layout layoutConfig) string {
@@ -353,10 +313,6 @@ func (a App) renderHeader(layout layoutConfig) string {
 		bits = append(bits, a.styles.pill.Render(a.workspaceName))
 	}
 
-	if a.theme != "" && layout.ShowHeaderPills {
-		bits = append(bits, a.styles.pill.Render(a.theme))
-	}
-
 	// Token/message count
 	if a.tokensUsed > 0 {
 		bits = append(bits, a.styles.tokenCount.Render(fmt.Sprintf("~%d tokens", a.tokensUsed)))
@@ -370,37 +326,56 @@ func (a App) renderHeader(layout layoutConfig) string {
 }
 
 func (a App) renderSetup(header string) string {
-
 	var b strings.Builder
-	b.WriteString(header)
-	b.WriteString("\n\n")
 
-	// Render ASCII art logo based on terminal width
-	if a.width >= 80 {
+	// Keep short terminals useful: the composer and setup action must remain
+	// visible even when there is not enough room for decorative chrome.
+	ultraCompact := a.height > 0 && a.height < 16
+	compact := a.height > 0 && a.height < 24
+	if compact {
+		b.WriteString(header)
+		b.WriteString("\n\n")
+	}
+	switch {
+	case ultraCompact:
+		// The header and composer are sufficient at this size. The placeholder
+		// still points users to commands when horizontal space allows it.
+	case compact:
+		b.WriteString(a.styles.title.Render("Connect an AI provider"))
+		b.WriteString("\n")
+		b.WriteString(a.styles.muted.Render("Use /provider, then /model to get started."))
+		b.WriteString("\n\n")
+	case a.width >= 80:
 		b.WriteString(renderLogo(a.styles, a.width))
-	} else {
+	default:
 		b.WriteString(renderLogoSmall(a.styles))
 	}
-	b.WriteString("\n\n")
+	if !compact {
+		contentWidth := max(20, a.width-10)
+		rule := a.styles.divider.Render(strings.Repeat("─", min(56, contentWidth)))
+		provider, model := a.welcomeConnectionDetails()
 
-	b.WriteString(a.styles.heroBorder.Width(a.width - 6).Render(
-		lipgloss.JoinVertical(lipgloss.Left,
-			a.styles.subtitle.Render("Terminal-first AI coding agent"),
-			"",
-			a.styles.accent.Render("01")+"  "+a.styles.muted.Render("Choose a provider          /provider"),
-			a.styles.accent.Render("02")+"  "+a.styles.muted.Render("Paste your API key         prompted automatically"),
-			a.styles.accent.Render("03")+"  "+a.styles.muted.Render("Pick a model               /model"),
-			a.styles.accent.Render("04")+"  "+a.styles.muted.Render("Start chatting             type anything"),
-		),
-	))
-
-	b.WriteString("\n")
-
-	b.WriteString(a.renderWorkspacePills())
-	b.WriteString("\n\n")
-
-	if len(a.log) > 0 {
-		b.WriteString(a.console())
+		b.WriteString("\n\n")
+		b.WriteString(a.styles.subtitle.Render("          Your AI Coding Agent — " + BuildVersion))
+		b.WriteString("\n\n")
+		b.WriteString(rule)
+		b.WriteString("\n\n")
+		b.WriteString(a.styles.muted.Render("Model:      ") + a.styles.input.Render(model))
+		b.WriteString("\n")
+		b.WriteString(a.styles.muted.Render("Provider:   ") + a.styles.input.Render(provider))
+		b.WriteString("\n")
+		b.WriteString(a.styles.muted.Render("Workspace:  ") + a.styles.input.Render(a.workspaceRoot))
+		b.WriteString("\n\n")
+		b.WriteString(rule)
+		b.WriteString("\n\n")
+		b.WriteString(a.styles.accent.Render("Type a message to start"))
+		b.WriteString("\n")
+		b.WriteString(a.styles.accent.Render("/help") + a.styles.muted.Render("     show commands"))
+		b.WriteString("\n")
+		b.WriteString(a.styles.accent.Render("/model") + a.styles.muted.Render("    switch model"))
+		b.WriteString("\n")
+		b.WriteString(a.styles.accent.Render("/exit") + a.styles.muted.Render("     quit"))
+		b.WriteString("\n")
 	}
 
 	if len(a.currentSuggestions()) > 0 {
@@ -411,90 +386,36 @@ func (a App) renderSetup(header string) string {
 	b.WriteString("\n")
 	b.WriteString(a.renderPrompt())
 
-	return a.styles.panel.Width(a.width - 4).Render(b.String())
+	return a.renderMainPanel(b.String())
 }
 
-func (a App) renderWorkspacePills() string {
+func (a App) welcomeConnectionDetails() (provider, model string) {
+	provider, model = "Not connected", "Not selected"
 	if a.cfg == nil {
-		return ""
+		return provider, model
 	}
 	profile, err := a.cfg.Active()
 	if err != nil {
-		return ""
+		return provider, model
 	}
-	pill := func(label, value string) string {
-		if value == "" {
-			return a.styles.muted.Render(label + " not set")
-		}
-		return a.styles.pill.Render(value)
+	if profile.Provider != "" {
+		provider = profile.Provider
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Center,
-		pill("provider", profile.Provider),
-		" ",
-		pill("model", profile.Model),
-		" ",
-		pill("theme", a.theme),
-	)
-}
-
-func (a App) renderChatContent(layout layoutConfig) string {
-	return a.renderChatContentWithHeaderBudget(layout, false)
-}
-
-func (a App) renderChatContentWithHeaderBudget(layout layoutConfig, includeHeader bool) string {
-	renderWidth := max(40, layout.ChatWidth)
-	var b strings.Builder
-
-	// Use grid layout for consistent height calculation
-	grid := a.computeCurrentGrid()
-
-	// Show transcript messages
-	if a.hasTranscriptContent() {
-		b.WriteString(a.consoleFor(renderWidth, grid.TranscriptHeight, grid.TranscriptHeight))
-		b.WriteString("\n")
+	if profile.Model != "" {
+		model = profile.Model
 	}
-
-	// Suggestions
-	if len(a.currentSuggestions()) > 0 {
-		b.WriteString(a.renderSuggestionsFor(renderWidth))
-		b.WriteString("\n")
-	}
-
-	// Permission prompt
-	if a.permissionPrompt != nil && a.permissionPrompt.active {
-		b.WriteString(a.permissionPrompt.render(a.styles, renderWidth))
-		b.WriteString("\n\n")
-	}
-
-	b.WriteString(a.renderActivityStrip(renderWidth))
-
-	// Input prompt — always a small portion at the bottom
-	b.WriteString(a.renderPromptFor(renderWidth))
-
-	return b.String()
-}
-
-func (a App) renderChatColumn(header string, layout layoutConfig) string {
-	var b strings.Builder
-	b.WriteString(header)
-	b.WriteString("\n\n")
-	b.WriteString(a.renderChatContentWithHeaderBudget(layout, true))
-	return lipgloss.NewStyle().Width(max(40, layout.ChatWidth)).Render(b.String())
+	return provider, model
 }
 
 func (a App) renderActivityStrip(width int) string {
 	var b strings.Builder
 
-	if a.loading {
-		b.WriteString(a.loadingText())
+	if a.streamBuffer != "" {
+		b.WriteString(a.renderAssistantCard(a.streamBuffer, width, true))
 		b.WriteString("\n")
-	} else if a.streamBuffer != "" && a.streamFade != nil {
-		preview := a.streamFade.render()
-		if preview != "" {
-			// Keep stream preview compact so the input stays visible
-			b.WriteString(takeLastLines(preview, maxActivityPreviewLines))
-			b.WriteString("\n")
-		}
+	} else if a.loading {
+		b.WriteString(a.renderThinkingStatus(width))
+		b.WriteString("\n")
 	}
 
 	out := b.String()
@@ -590,7 +511,11 @@ func (a App) console() string {
 	return a.consoleFor(a.width-8, 12, 0)
 }
 
-const liveToolLogKind = "tool_live"
+const (
+	liveToolLogKind      = "tool_live"
+	liveAssistantLogKind = "assistant_live"
+	thinkingLogKind      = "thinking_live"
+)
 
 func (a App) hasActiveStreamingTool() bool {
 	return a.streamingTool != nil && !a.streamingTool.completed
@@ -601,16 +526,19 @@ func (a App) hasTranscriptContent() bool {
 }
 
 func (a App) transcriptEntries() []logEntry {
-	if !a.hasActiveStreamingTool() {
+	if !a.hasActiveStreamingTool() && a.streamBuffer == "" && !a.loading {
 		return a.log
 	}
-	entries := make([]logEntry, 0, len(a.log)+1)
+	entries := make([]logEntry, 0, len(a.log)+2)
 	entries = append(entries, a.log...)
-	entries = append(entries, logEntry{
-		Kind: liveToolLogKind,
-		Text: a.streamingTool.name,
-		Time: time.Now(),
-	})
+	if a.streamBuffer != "" {
+		entries = append(entries, logEntry{Kind: liveAssistantLogKind, Text: a.streamBuffer, Time: time.Now()})
+	} else if a.loading {
+		entries = append(entries, logEntry{Kind: thinkingLogKind, Text: "Thinking...", Time: time.Now()})
+	}
+	if a.hasActiveStreamingTool() {
+		entries = append(entries, logEntry{Kind: liveToolLogKind, Text: a.streamingTool.name, Time: time.Now()})
+	}
 	return entries
 }
 
@@ -620,129 +548,180 @@ func (a App) consoleFor(width int, visibleLines int, heightBudget int) string {
 	if len(entries) == 0 {
 		return ""
 	}
+	return a.consoleForVisualLines(entries, width, visibleLines, heightBudget)
+	/*
 
+		vp := a.viewport
+		if vp == nil {
+			vp = newViewport()
+		}
+		if visibleLines <= 0 {
+			visibleLines = 12
+		}
+		// Prefer a window large enough for the height budget so bottom-up packing
+		// can include more short entries before tall tool cards cap the view.
+		if heightBudget > visibleLines {
+			visibleLines = heightBudget
+		}
+		vp.setVisibleLines(visibleLines)
+		vp.setTotalLines(len(entries))
+
+		renderWidth := max(32, width-4)
+		hintReserve := 0
+		if heightBudget > 0 {
+			hintReserve = 2
+		}
+		bodyBudget := heightBudget
+		if bodyBudget > hintReserve {
+			bodyBudget -= hintReserve
+		}
+
+		// Build candidate rows (newest first after scrollPos), then pack bottom-up
+		// so the latest tool/read output stays visible and the input stays put.
+		end := vp.packWindowEnd()
+		type packedRow struct {
+			idx  int
+			text string
+		}
+		var packed []packedRow
+		linesUsed := 0
+
+		for i := end - 1; i >= 0; i-- {
+			if bodyBudget > 0 && linesUsed >= bodyBudget {
+				break
+			}
+			heightLimit := 0
+			if bodyBudget > 0 {
+				heightLimit = bodyBudget - linesUsed
+			}
+			row := a.renderLogEntryWithHeightLimit(entries[i], i, renderWidth, heightLimit)
+			entryLines := visualHeight(row)
+			if entryLines < 1 {
+				entryLines = 1
+			}
+
+			if bodyBudget > 0 && linesUsed+entryLines > bodyBudget {
+				remaining := bodyBudget - linesUsed
+				if remaining <= 0 {
+					break
+				}
+				// Keep the newest slice of a tall entry so tool/read tails stay useful.
+				row = takeLastLines(row, remaining)
+				entryLines = visualHeight(row)
+				if entryLines < 1 {
+					break
+				}
+				packed = append(packed, packedRow{idx: i, text: row})
+				linesUsed += entryLines
+				break
+			}
+
+			packed = append(packed, packedRow{idx: i, text: row})
+			linesUsed += entryLines
+		}
+
+		// packed is newest→oldest; reverse for chronological display
+		for i, j := 0, len(packed)-1; i < j; i, j = i+1, j-1 {
+			packed[i], packed[j] = packed[j], packed[i]
+		}
+
+		var b strings.Builder
+		startIdx := 0
+		endIdx := end
+		if len(packed) > 0 {
+			startIdx = packed[0].idx
+			endIdx = packed[len(packed)-1].idx + 1
+		}
+
+		if startIdx > 0 {
+			b.WriteString(a.styles.scrollHint.Render(fmt.Sprintf("... %d older entries ...", startIdx)))
+			b.WriteString("\n")
+		}
+
+		for _, row := range packed {
+			b.WriteString(row.text)
+			if !strings.HasSuffix(row.text, "\n") {
+				b.WriteString("\n")
+			}
+		}
+
+		vp.setRenderedEntries(len(packed))
+
+		if endIdx < len(entries) {
+			b.WriteString(a.styles.scrollHint.Render(fmt.Sprintf("... %d more entries ...", len(entries)-endIdx)))
+			b.WriteString("\n")
+		}
+
+		if !vp.isAtBottom() && (a.loading || a.streamBuffer != "") {
+			b.WriteString(a.styles.accent.Render("  jump to latest "))
+			b.WriteString(a.styles.muted.Render("(scroll down)"))
+			b.WriteString("\n")
+		}
+
+		out := b.String()
+		if heightBudget > 0 && visualHeight(out) > heightBudget {
+			out = takeLastLines(out, heightBudget)
+			if !strings.HasSuffix(out, "\n") {
+				out += "\n"
+			}
+		}
+		// Width is already constrained by individual entry rendering functions
+		// (renderLogEntryWithHeightLimit, streamingToolCallView, etc.).
+		return out
+	*/
+}
+
+// consoleForVisualLines scrolls the rendered transcript by terminal rows.
+// Treating each log entry as one scroll unit made multi-line cards impossible
+// to inspect because a wheel tick skipped the whole entry.
+func (a App) consoleForVisualLines(entries []logEntry, width, visibleLines, heightBudget int) string {
 	vp := a.viewport
 	if vp == nil {
 		vp = newViewport()
 	}
-	if visibleLines <= 0 {
-		visibleLines = 12
-	}
-	// Prefer a window large enough for the height budget so bottom-up packing
-	// can include more short entries before tall tool cards cap the view.
-	if heightBudget > visibleLines {
-		visibleLines = heightBudget
-	}
-	vp.setVisibleLines(visibleLines)
-	vp.setTotalLines(len(entries))
-
 	renderWidth := max(32, width-4)
-	hintReserve := 0
-	if heightBudget > 0 {
-		hintReserve = 2
-	}
-	bodyBudget := heightBudget
-	if bodyBudget > hintReserve {
-		bodyBudget -= hintReserve
-	}
 
-	// Build candidate rows (newest first after scrollPos), then pack bottom-up
-	// so the latest tool/read output stays visible and the input stays put.
-	end := vp.packWindowEnd()
-	type packedRow struct {
-		idx  int
-		text string
+	var content strings.Builder
+	for i, entry := range entries {
+		row := a.renderLogEntryWithHeightLimit(entry, i, renderWidth, 0)
+		content.WriteString(strings.TrimSuffix(row, "\n"))
+		content.WriteString("\n")
 	}
-	var packed []packedRow
-	linesUsed := 0
+	contentLines := strings.Split(strings.TrimSuffix(content.String(), "\n"), "\n")
 
-	for i := end - 1; i >= 0; i-- {
-		if bodyBudget > 0 && linesUsed >= bodyBudget {
-			break
-		}
-		heightLimit := 0
-		if bodyBudget > 0 {
-			heightLimit = bodyBudget - linesUsed
-		}
-		row := a.renderLogEntryWithHeightLimit(entries[i], i, renderWidth, heightLimit)
-		entryLines := visualHeight(row)
-		if entryLines < 1 {
-			entryLines = 1
-		}
-
-		if bodyBudget > 0 && linesUsed+entryLines > bodyBudget {
-			remaining := bodyBudget - linesUsed
-			if remaining <= 0 {
-				break
-			}
-			// Keep the newest slice of a tall entry so tool/read tails stay useful.
-			row = takeLastLines(row, remaining)
-			entryLines = visualHeight(row)
-			if entryLines < 1 {
-				break
-			}
-			packed = append(packed, packedRow{idx: i, text: row})
-			linesUsed += entryLines
-			break
-		}
-
-		packed = append(packed, packedRow{idx: i, text: row})
-		linesUsed += entryLines
+	if heightBudget <= 0 {
+		heightBudget = visibleLines
 	}
-
-	// packed is newest→oldest; reverse for chronological display
-	for i, j := 0, len(packed)-1; i < j; i, j = i+1, j-1 {
-		packed[i], packed[j] = packed[j], packed[i]
+	if heightBudget <= 0 {
+		heightBudget = 12
 	}
+	contentHeight := max(1, heightBudget-3)
+	vp.setRenderedEntries(0)
+	vp.setVisibleLines(contentHeight)
+	vp.setTotalLines(len(contentLines))
+
+	end := clamp(len(contentLines)-vp.scrollPos, 0, len(contentLines))
+	start := max(0, end-contentHeight)
 
 	var b strings.Builder
-	startIdx := 0
-	endIdx := end
-	if len(packed) > 0 {
-		startIdx = packed[0].idx
-		endIdx = packed[len(packed)-1].idx + 1
-	}
-
-	if startIdx > 0 {
-		b.WriteString(a.styles.scrollHint.Render(fmt.Sprintf("... %d older entries ...", startIdx)))
+	if start > 0 {
+		b.WriteString(a.styles.scrollHint.Render(fmt.Sprintf("... %d older lines ...", start)))
 		b.WriteString("\n")
 	}
-
-	for _, row := range packed {
-		b.WriteString(row.text)
-		if !strings.HasSuffix(row.text, "\n") {
-			b.WriteString("\n")
-		}
-	}
-
-	vp.setRenderedEntries(len(packed))
-
-	if endIdx < len(entries) {
-		b.WriteString(a.styles.scrollHint.Render(fmt.Sprintf("... %d more entries ...", len(entries)-endIdx)))
+	for _, line := range contentLines[start:end] {
+		b.WriteString(line)
 		b.WriteString("\n")
 	}
-
-	if scrollIndicator := vp.renderScrollIndicator(renderWidth, a.styles); scrollIndicator != "" {
-		b.WriteString(scrollIndicator)
+	if end < len(contentLines) {
+		b.WriteString(a.styles.scrollHint.Render(fmt.Sprintf("... %d newer lines ...", len(contentLines)-end)))
 		b.WriteString("\n")
 	}
-
 	if !vp.isAtBottom() && (a.loading || a.streamBuffer != "") {
 		b.WriteString(a.styles.accent.Render("  jump to latest "))
 		b.WriteString(a.styles.muted.Render("(scroll down)"))
 		b.WriteString("\n")
 	}
-
-	out := b.String()
-	if heightBudget > 0 && visualHeight(out) > heightBudget {
-		out = takeLastLines(out, heightBudget)
-		if !strings.HasSuffix(out, "\n") {
-			out += "\n"
-		}
-	}
-	// Width is already constrained by individual entry rendering functions
-	// (renderLogEntryWithHeightLimit, streamingToolCallView, etc.).
-	return out
+	return b.String()
 }
 
 // renderLogEntry renders a single log entry with timestamp and role marker.
@@ -751,75 +730,7 @@ func (a App) renderLogEntry(entry logEntry, entryIdx int, renderWidth int) strin
 }
 
 func (a App) renderLogEntryWithHeightLimit(entry logEntry, entryIdx int, renderWidth int, heightLimit int) string {
-	ts := entry.Time.Format("15:04:05")
-	timeStr := a.styles.logTime.Render(ts)
-
-	var marker string
-	switch entry.Kind {
-	case "tool", liveToolLogKind:
-		marker = a.styles.roleTool.Render("tool")
-	case completionLogKind:
-		marker = a.styles.success.Render("done")
-	case "file":
-		marker = a.styles.roleFile.Render("file")
-	case "system":
-		marker = a.styles.roleSystem.Render("system")
-	case "assistant":
-		marker = a.styles.roleAssist.Render("assistant")
-	case "error":
-		marker = a.styles.error.Render("error")
-	default:
-		marker = a.styles.muted.Render(entry.Kind)
-	}
-	marker = a.styles.logPrefix.Render(marker)
-
-	if entry.Kind == liveToolLogKind {
-		contentWidth := max(20, renderWidth-lipgloss.Width(timeStr)-lipgloss.Width(marker)-2)
-		entryRendered := streamingToolCallView(a.streamingTool, a.styles, contentWidth, heightLimit)
-		if entryRendered == "" {
-			return ""
-		}
-		return fmt.Sprintf("%s %s %s", timeStr, marker, entryRendered)
-	}
-	if entry.Kind == completionLogKind {
-		contentWidth := max(20, renderWidth-lipgloss.Width(timeStr)-lipgloss.Width(marker)-2)
-		entryRendered := a.renderCompletionEntry(entry.Text, contentWidth, heightLimit)
-		if entryRendered == "" {
-			return ""
-		}
-		return fmt.Sprintf("%s %s %s", timeStr, marker, entryRendered)
-	}
-
-	entryRendered := ""
-	if entry.renderedText != "" && entry.renderWidth == renderWidth {
-		entryRendered = entry.renderedText
-	} else {
-		switch entry.Kind {
-		case "assistant":
-			entryRendered = renderMarkdown(entry.Text, renderWidth, a.styles)
-		case "tool":
-			cardRendered := a.renderToolEntry(entry, renderWidth)
-			if cardRendered != "" {
-				entryRendered = cardRendered
-			} else if a.renderer != nil {
-				entryRendered = a.renderer.Render(entry.Text)
-			} else {
-				entryRendered = entry.Text
-			}
-		default:
-			if a.renderer != nil {
-				entryRendered = a.renderer.Render(entry.Text)
-			} else {
-				entryRendered = entry.Text
-			}
-		}
-		if entryIdx >= 0 && entryIdx < len(a.log) {
-			a.log[entryIdx].renderedText = entryRendered
-			a.log[entryIdx].renderWidth = renderWidth
-		}
-	}
-
-	return fmt.Sprintf("%s %s %s", timeStr, marker, entryRendered)
+	return a.renderConversationEntry(entry, renderWidth, heightLimit)
 }
 
 // renderToolEntry renders a tool log entry using the tool card registry.
@@ -901,17 +812,16 @@ func (a App) promptWidth() int {
 }
 
 func (a App) promptWidthFor(width int) int {
-	width = width - 6
-	if width < 32 {
-		return 32
-	}
-	return width
+	return max(1, width-6)
 }
 
 func (a App) renderPromptContent(width int) string {
 	emptyHint := "Describe changes, mention @files, or type /"
 	if width < 58 {
 		emptyHint = "Message, @file, or /command"
+	}
+	if width < 26 {
+		emptyHint = ""
 	}
 	emptyHint = a.styles.muted.Render(emptyHint)
 	cursor := a.styles.cursor.Render("█")
@@ -936,13 +846,14 @@ func (a App) renderPromptContent(width int) string {
 		return ""
 	default:
 		displayInput := a.input
-		if strings.HasPrefix(displayInput, "/api-key ") && len(displayInput) > 9 {
-			displayInput = "/api-key " + strings.Repeat("*", len(displayInput)-9)
-		}
 		lines := strings.Split(displayInput, "\n")
 		if len(lines) <= 1 {
 			if displayInput == "" {
-				return a.styles.prompt.Render(">>> ") + cursor + " " + emptyHint
+				content := a.styles.prompt.Render(">>> ") + cursor
+				if emptyHint != "" {
+					content += " " + emptyHint
+				}
+				return content
 			}
 			if a.cursorPos < len(displayInput) {
 				left := displayInput[:a.cursorPos]
@@ -1021,14 +932,41 @@ func (a App) renderSuggestionsFor(width int) string {
 	}
 
 	var b strings.Builder
-	for i, item := range items {
+	isMention := false
+	if _, ok := activeMentionToken(a.input); ok {
+		isMention = true
+	}
+	title := "Commands"
+	footer := "Up/Down navigate  Enter select  Esc close"
+	if isMention {
+		title = "Mention a file"
+		footer = "Type a path with /  Up/Down navigate  Enter mention"
+	}
+	b.WriteString(a.styles.cardHeader.Render(title))
+	b.WriteString("\n")
+	b.WriteString(a.styles.muted.Render(strings.Repeat("-", max(1, width-8))))
+	b.WriteString("\n")
+
+	start := 0
+	if a.selected >= maxVisibleSuggestions {
+		start = a.selected - maxVisibleSuggestions + 1
+	}
+	end := min(len(items), start+maxVisibleSuggestions)
+
+	for i := start; i < end; i++ {
+		item := items[i]
 		prefix := "  "
 		if i == a.selected {
 			prefix = "> "
 		}
 
+		// File mentions get nearly the entire dialog width. The old shared
+		// 32-column cap hid the filename and most of its workspace path.
 		labelWidth := clamp(width/2, 14, 32)
-		descWidth := max(10, width-labelWidth-8)
+		if isMention {
+			labelWidth = max(10, width-12)
+		}
+		descWidth := max(4, width-labelWidth-7)
 		label := truncateString(item.Label, labelWidth)
 		desc := truncateString(item.Description, descWidth)
 		if desc == "" {
@@ -1043,8 +981,29 @@ func (a App) renderSuggestionsFor(width int) string {
 		}
 		b.WriteString("\n")
 	}
-	return b.String()
+
+	if len(items) > maxVisibleSuggestions {
+		b.WriteString(a.styles.muted.Render(fmt.Sprintf("  %d-%d of %d", start+1, end, len(items))))
+		b.WriteString("\n")
+	}
+	b.WriteString(a.styles.cardFooter.Render(footer))
+
+	return a.styles.card.Width(max(20, width-4)).Render(b.String())
 }
+
+// renderSuggestionDialog keeps completion choices visible near the visual
+// center while leaving the composer anchored at the bottom of the terminal.
+func (a App) renderSuggestionDialog(width, height int) string {
+	dialogWidth := clamp(width-8, 32, 88)
+	dialog := a.renderSuggestionsFor(dialogWidth)
+	return lipgloss.Place(
+		max(1, width), max(1, height),
+		lipgloss.Center, lipgloss.Center,
+		dialog,
+	)
+}
+
+const maxVisibleSuggestions = 8
 
 func (a App) loadingText() string {
 	spinnerChars := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}

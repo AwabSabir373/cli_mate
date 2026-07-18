@@ -2,8 +2,6 @@ package ui
 
 import (
 	"strings"
-
-	"charm.land/lipgloss/v2"
 )
 
 // viewport handles smooth scrolling and auto-scroll behavior for the transcript.
@@ -205,10 +203,11 @@ func (vp *viewport) clamp() {
 // scrollPos is "how many newest entries to skip" for bottom-up packing, so the
 // wheel can always walk the full log even when only one tall tool card fits.
 func (vp *viewport) maxScroll() int {
-	if vp.totalLines <= 1 {
+	visible := vp.effectiveVisible()
+	if vp.totalLines <= visible {
 		return 0
 	}
-	return vp.totalLines - 1
+	return vp.totalLines - visible
 }
 
 // scrollHint returns a string indicating scroll position.
@@ -226,32 +225,4 @@ func (vp *viewport) scrollHint(styles appStyles) string {
 	}
 
 	return strings.Join(hints, " ")
-}
-
-// renderScrollIndicator renders a scroll position indicator bar.
-func (vp *viewport) renderScrollIndicator(_ int, _ appStyles) string {
-	maxScroll := vp.maxScroll()
-	if maxScroll <= 0 {
-		return ""
-	}
-
-	pos := float64(vp.scrollPos) / float64(maxScroll)
-	barHeight := 1
-	barPos := int(pos * float64(barHeight))
-
-	var b strings.Builder
-	for i := 0; i < barHeight; i++ {
-		if i == barPos {
-			b.WriteString(lipgloss.NewStyle().
-				Background(lipgloss.Color("243")).
-				Foreground(lipgloss.Color("243")).
-				Render("━"))
-		} else {
-			b.WriteString(lipgloss.NewStyle().
-				Foreground(lipgloss.Color("236")).
-				Render("━"))
-		}
-	}
-
-	return b.String()
 }

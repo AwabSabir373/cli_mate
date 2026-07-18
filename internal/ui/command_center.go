@@ -59,9 +59,6 @@ func (cc *commandCenter) buildCategories(userCmds []usercommands.Command) {
 				{Value: "/setup", Label: "/setup", Description: "Run the interactive setup wizard"},
 				{Value: "/provider ", Label: "/provider", Description: "Choose AI provider"},
 				{Value: "/model ", Label: "/model", Description: "Choose model for active provider"},
-				{Value: "/api-key ", Label: "/api-key", Description: "Set or update API key"},
-				{Value: "/base-url ", Label: "/base-url", Description: "Set custom API endpoint URL"},
-				{Value: "/connect", Label: "/connect", Description: "Validate and connect to provider"},
 			},
 		},
 		{
@@ -74,18 +71,14 @@ func (cc *commandCenter) buildCategories(userCmds []usercommands.Command) {
 			},
 		},
 		{
-			name: "MCP & Extensions",
+			name: "Extensions",
 			commands: []suggestion{
 				{Value: "/mcp", Label: "/mcp", Description: "Manage MCP servers"},
-				{Value: "/skills", Label: "/skills", Description: "List available skills"},
 			},
 		},
 		{
 			name: "Code & Review",
 			commands: []suggestion{
-				{Value: "/review", Label: "/review", Description: "Review code changes"},
-				{Value: "/diff ", Label: "/diff", Description: "Show git diff"},
-				{Value: "/commit ", Label: "/commit", Description: "Create a git commit"},
 				{Value: "/open ", Label: "/open", Description: "Preview a file in the terminal"},
 				{Value: "/copy", Label: "/copy", Description: "Copy last AI response to clipboard"},
 				{Value: "/undo", Label: "/undo", Description: "Undo the last file edit"},
@@ -95,15 +88,12 @@ func (cc *commandCenter) buildCategories(userCmds []usercommands.Command) {
 			name: "Appearance",
 			commands: []suggestion{
 				{Value: "/theme ", Label: "/theme", Description: "Choose terminal theme"},
-				{Value: "/style ", Label: "/style", Description: "Set response style (concise/explanatory/review)"},
 			},
 		},
 		{
 			name: "Advanced",
 			commands: []suggestion{
-				{Value: "/max-tokens ", Label: "/max-tokens", Description: "Set custom context level limit"},
-				{Value: "/approve", Label: "/approve", Description: "Toggle auto-approve for tool execution"},
-				{Value: "/update", Label: "/update", Description: "Check for new version"},
+				{Value: "/permissions", Label: "/permissions", Description: "Toggle tool auto-approval"},
 				{Value: "/help", Label: "/help", Description: "Show all available commands"},
 			},
 		},

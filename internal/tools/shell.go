@@ -272,14 +272,14 @@ func tokenize(s string) ([]string, error) {
 // characters, but blocking them provides defense-in-depth against accidental
 // misuse or future execution path changes.
 var blockedShellMetas = []string{
-	"|",   // pipe
-	";",   // command separator
-	"&",   // background / command separator
-	"`",   // command substitution (backtick)
-	"$(",  // command substitution
-	">",   // redirect output
-	"<",   // redirect input
-	"~",   // tilde expansion
+	"|",  // pipe
+	";",  // command separator
+	"&",  // background / command separator
+	"`",  // command substitution (backtick)
+	"$(", // command substitution
+	">",  // redirect output
+	"<",  // redirect input
+	"~",  // tilde expansion
 }
 
 // containsShellMeta checks if a token contains shell metacharacters that could
@@ -312,5 +312,3 @@ func validateCommand(name string) error {
 
 	return fmt.Errorf("command %q is not in the safe command whitelist. Allowed commands: %s. Use only these simple commands with structured arguments (no pipes, redirects, or shell operators).", name, strings.Join(safeCommands, ", "))
 }
-
-

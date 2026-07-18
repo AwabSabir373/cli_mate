@@ -2,28 +2,34 @@ package tools
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"cli_mate/internal/providers/contracts"
 )
 
+const defaultMCPCallTimeout = 30 * time.Second
+
 // MCPClient implements the Model Context Protocol over stdio.
 type MCPClient struct {
-	endpoint string
-	args     []string
-	cmd      *exec.Cmd
-	stdin    io.WriteCloser
-	stdout   *bufio.Reader
-	mu       sync.Mutex
-	nextID   int
-	tools    []contracts.ToolDefinition
+	endpoint     string
+	args         []string
+	cmd          *exec.Cmd
+	stdin        io.WriteCloser
+	stdout       *bufio.Reader
+	stdoutCloser io.ReadCloser
+	stderr       bytes.Buffer
+	writeMu      sync.Mutex
+	callMu       sync.Mutex
+	nextID       int
+	tools        []contracts.ToolDefinition
 }
 
 func NewMCPClient(endpoint string, args []string) *MCPClient {
@@ -52,7 +58,10 @@ func (c *MCPClient) Definition() Definition {
 // Connect starts the MCP server process and performs the initialize handshake.
 func (c *MCPClient) Connect(ctx context.Context) error {
 	c.cmd = exec.CommandContext(ctx, c.endpoint, c.args...)
-	c.cmd.Stderr = os.Stderr
+	// MCP servers use stdout for JSON-RPC and may use stderr for diagnostics.
+	// Never attach child stderr to the alternate-screen TUI because it corrupts
+	// the rendered frame; retain it so failures can include useful context.
+	c.cmd.Stderr = &c.stderr
 
 	var err error
 	c.stdin, err = c.cmd.StdinPipe()
@@ -64,10 +73,12 @@ func (c *MCPClient) Connect(ctx context.Context) error {
 		return fmt.Errorf("mcp stdout pipe: %w", err)
 	}
 	c.stdout = bufio.NewReader(stdout)
+	c.stdoutCloser = stdout
 
 	if err := c.cmd.Start(); err != nil {
 		return fmt.Errorf("mcp start: %w", err)
 	}
+	c.tools = nil
 
 	// Initialize handshake
 	initResp, err := c.call(ctx, "initialize", map[string]any{
@@ -118,7 +129,36 @@ func (c *MCPClient) Connect(ctx context.Context) error {
 
 // Tools returns the tool definitions discovered from the MCP server.
 func (c *MCPClient) Tools() []contracts.ToolDefinition {
-	return c.tools
+	return append([]contracts.ToolDefinition(nil), c.tools...)
+}
+
+// RemoteTools adapts discovered MCP tools to the agent's native Tool contract.
+func (c *MCPClient) RemoteTools() []Tool {
+	result := make([]Tool, 0, len(c.tools))
+	for _, definition := range c.tools {
+		result = append(result, &mcpRemoteTool{client: c, definition: definition})
+	}
+	return result
+}
+
+type mcpRemoteTool struct {
+	client     *MCPClient
+	definition contracts.ToolDefinition
+}
+
+func (t *mcpRemoteTool) Name() string { return t.definition.Name }
+
+func (t *mcpRemoteTool) Definition() Definition {
+	return Definition{
+		Name:        t.definition.Name,
+		Description: t.definition.Description,
+		Schema:      t.definition.Schema,
+	}
+}
+
+func (t *mcpRemoteTool) Execute(ctx context.Context, call Call) (Result, error) {
+	call.Name = t.definition.Name
+	return t.client.Execute(ctx, call)
 }
 
 // Execute calls a tool on the MCP server.
@@ -130,28 +170,44 @@ func (c *MCPClient) Execute(ctx context.Context, call Call) (Result, error) {
 	if err != nil {
 		return Result{Error: err.Error()}, err
 	}
-
-	// Extract content from response
-	if content, ok := resp["content"].([]any); ok {
-		var b strings.Builder
-		for _, item := range content {
-			if block, ok := item.(map[string]any); ok {
-				if t, ok := block["text"].(string); ok {
-					b.WriteString(t)
-				}
-			}
+	if isError, _ := resp["isError"].(bool); isError {
+		message := extractMCPText(resp)
+		if message == "" {
+			message = "MCP tool returned an error"
 		}
-		return Result{Content: b.String()}, nil
+		return Result{Error: message}, fmt.Errorf("%s", message)
+	}
+
+	if text := extractMCPText(resp); text != "" {
+		return Result{Content: text}, nil
 	}
 
 	data, _ := json.Marshal(resp)
 	return Result{Content: string(data)}, nil
 }
 
+func extractMCPText(resp map[string]any) string {
+	content, _ := resp["content"].([]any)
+	var b strings.Builder
+	for _, item := range content {
+		block, _ := item.(map[string]any)
+		if text, ok := block["text"].(string); ok {
+			if b.Len() > 0 {
+				b.WriteByte('\n')
+			}
+			b.WriteString(text)
+		}
+	}
+	return b.String()
+}
+
 // Close shuts down the MCP server process.
 func (c *MCPClient) Close() error {
 	if c.stdin != nil {
-		c.stdin.Close()
+		_ = c.stdin.Close()
+	}
+	if c.stdoutCloser != nil {
+		_ = c.stdoutCloser.Close()
 	}
 	if c.cmd != nil && c.cmd.Process != nil {
 		return c.cmd.Process.Kill()
@@ -185,10 +241,15 @@ type jsonrpcError struct {
 }
 
 func (c *MCPClient) call(ctx context.Context, method string, params any) (map[string]any, error) {
-	c.mu.Lock()
+	c.callMu.Lock()
+	defer c.callMu.Unlock()
+
 	c.nextID++
 	id := c.nextID
-	c.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	req := jsonrpcRequest{
 		JSONRPC: "2.0",
@@ -202,21 +263,44 @@ func (c *MCPClient) call(ctx context.Context, method string, params any) (map[st
 		return nil, err
 	}
 
-	// Write request with Content-Length header (LSP-style framing)
-	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(data))
-	c.mu.Lock()
-	_, err = c.stdin.Write([]byte(header))
-	if err == nil {
-		_, err = c.stdin.Write(data)
-	}
-	c.mu.Unlock()
+	err = c.writeMessage(data)
 	if err != nil {
 		return nil, fmt.Errorf("mcp write: %w", err)
 	}
 
-	// Read response
-	resp, err := c.readResponse()
+	callCtx := ctx
+	cancel := func() {}
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		callCtx, cancel = context.WithTimeout(ctx, defaultMCPCallTimeout)
+	}
+	defer cancel()
+
+	// A pipe read cannot observe context cancellation by itself. Read on a
+	// helper goroutine and close the transport when the call expires, which
+	// unblocks the read and prevents a stuck MCP server from freezing the run.
+	type responseResult struct {
+		response *jsonrpcResponse
+		err      error
+	}
+	resultCh := make(chan responseResult, 1)
+	go func() {
+		resp, readErr := c.readResponse(id)
+		resultCh <- responseResult{response: resp, err: readErr}
+	}()
+
+	var resp *jsonrpcResponse
+	select {
+	case result := <-resultCh:
+		resp, err = result.response, result.err
+	case <-callCtx.Done():
+		_ = c.Close()
+		return nil, fmt.Errorf("mcp %s timed out or was cancelled: %w", method, callCtx.Err())
+	}
 	if err != nil {
+		detail := strings.TrimSpace(c.stderr.String())
+		if detail != "" {
+			return nil, fmt.Errorf("%w (server stderr: %s)", err, detail)
+		}
 		return nil, err
 	}
 
@@ -243,47 +327,42 @@ func (c *MCPClient) notify(method string, params any) error {
 		return err
 	}
 
-	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(data))
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	_, err = c.stdin.Write([]byte(header))
-	if err == nil {
-		_, err = c.stdin.Write(data)
-	}
+	return c.writeMessage(data)
+}
+
+func (c *MCPClient) writeMessage(data []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	_, err := c.stdin.Write(append(data, '\n'))
 	return err
 }
 
-func (c *MCPClient) readResponse() (*jsonrpcResponse, error) {
-	// Read Content-Length header
-	contentLength := -1
+func (c *MCPClient) readResponse(expectedID int) (*jsonrpcResponse, error) {
 	for {
-		line, err := c.stdout.ReadString('\n')
+		line, err := c.stdout.ReadBytes('\n')
 		if err != nil {
-			return nil, fmt.Errorf("mcp read header: %w", err)
+			return nil, fmt.Errorf("mcp read response: %w", err)
 		}
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			break
+		line = []byte(strings.TrimSpace(string(line)))
+		if len(line) == 0 {
+			continue
 		}
-		var length int
-		if _, err := fmt.Sscanf(line, "Content-Length: %d", &length); err == nil {
-			contentLength = length
+		var envelope struct {
+			ID     *int            `json:"id,omitempty"`
+			Method string          `json:"method,omitempty"`
+			Result json.RawMessage `json:"result,omitempty"`
+			Error  *jsonrpcError   `json:"error,omitempty"`
 		}
+		if err := json.Unmarshal(line, &envelope); err != nil {
+			return nil, fmt.Errorf("mcp decode response: %w", err)
+		}
+		// Notifications may arrive between a request and its response.
+		if envelope.ID == nil {
+			continue
+		}
+		if *envelope.ID != expectedID {
+			return nil, fmt.Errorf("mcp response id mismatch: got %d, want %d", *envelope.ID, expectedID)
+		}
+		return &jsonrpcResponse{JSONRPC: "2.0", ID: *envelope.ID, Result: envelope.Result, Error: envelope.Error}, nil
 	}
-
-	if contentLength <= 0 {
-		return nil, fmt.Errorf("mcp: missing Content-Length header")
-	}
-
-	body := make([]byte, contentLength)
-	_, err := io.ReadFull(c.stdout, body)
-	if err != nil {
-		return nil, fmt.Errorf("mcp read body: %w", err)
-	}
-
-	var resp jsonrpcResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("mcp decode response: %w", err)
-	}
-	return &resp, nil
 }

@@ -72,18 +72,14 @@ func (kh *KeybindingHelp) GetKeyBindings() []KeyBinding {
 		{Keys: "/provider", Action: "Choose provider", Category: "Slash Commands"},
 		{Keys: "/model", Action: "Choose model", Category: "Slash Commands"},
 		{Keys: "/theme", Action: "Choose theme", Category: "Slash Commands"},
-		{Keys: "/api-key", Action: "Set API key", Category: "Slash Commands"},
+		{Keys: "/setup", Action: "Configure provider", Category: "Slash Commands"},
 		{Keys: "/status", Action: "Show configuration", Category: "Slash Commands"},
 		{Keys: "/clear", Action: "Clear console", Category: "Slash Commands"},
 		{Keys: "/copy", Action: "Copy last response", Category: "Slash Commands"},
 		{Keys: "/undo", Action: "Undo last edit", Category: "Slash Commands"},
-		{Keys: "/review", Action: "Review code changes", Category: "Slash Commands"},
-		{Keys: "/diff", Action: "Show git diff", Category: "Slash Commands"},
-		{Keys: "/commit", Action: "Create git commit", Category: "Slash Commands"},
 		{Keys: "/compact", Action: "Summarize messages", Category: "Slash Commands"},
-		{Keys: "/skills", Action: "List skills", Category: "Slash Commands"},
-		{Keys: "/update", Action: "Check for updates", Category: "Slash Commands"},
-		{Keys: "/style", Action: "Set response style", Category: "Slash Commands"},
+		{Keys: "/permissions", Action: "Toggle tool auto-approval", Category: "Slash Commands"},
+		{Keys: "/exit", Action: "Quit cli_mate", Category: "Slash Commands"},
 	}
 }
 

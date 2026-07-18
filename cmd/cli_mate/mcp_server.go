@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -18,8 +17,6 @@ func newMCPServerCommand() *cobra.Command {
 
 			// Register built-in project context tools
 			mcpserver.RegisterBuiltinTools(server)
-
-			fmt.Fprintf(os.Stderr, "cli_mate built-in MCP server started, listening on stdin...\n")
 
 			if err := server.Start(); err != nil {
 				return fmt.Errorf("mcp server error: %w", err)

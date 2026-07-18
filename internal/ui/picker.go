@@ -166,14 +166,6 @@ func (gp *genericPicker) handleKey(key string) (string, bool) {
 			gp.searchMode = true
 			gp.query = ""
 		}
-	case "delete", "backspace":
-		// Allow deletion of selected item
-		if gp.cursor >= 0 && gp.cursor < len(gp.items) {
-			gp.items = append(gp.items[:gp.cursor], gp.items[gp.cursor+1:]...)
-			if gp.cursor >= len(gp.items) {
-				gp.cursor = len(gp.items) - 1
-			}
-		}
 	}
 
 	return "", false
@@ -268,7 +260,7 @@ func pickerGroupFor(kind pickerKind) string {
 }
 
 // renderPicker renders the generic picker overlay.
-func renderPicker(gp *genericPicker, styles appStyles, width int) string {
+func renderPicker(gp *genericPicker, styles appStyles, width, height int) string {
 	if !gp.visible {
 		return ""
 	}
@@ -325,9 +317,17 @@ func renderPicker(gp *genericPicker, styles appStyles, width int) string {
 		groups = append(groups, group{name: currentGroup, items: gp.items[groupStart:], start: groupStart})
 	}
 
-	// Render visible items
+	// Render visible items. Reserve rows for the title, search/footer chrome,
+	// group heading, and the selected item's optional description.
+	visibleLimit := gp.maxVisible
+	if height > 0 {
+		visibleLimit = min(visibleLimit, max(1, height-10))
+	}
 	start := gp.scrollOff
-	end := start + gp.maxVisible
+	if gp.cursor >= start+visibleLimit {
+		start = gp.cursor - visibleLimit + 1
+	}
+	end := start + visibleLimit
 	if end > len(gp.items) {
 		end = len(gp.items)
 	}
@@ -376,8 +376,8 @@ func renderPicker(gp *genericPicker, styles appStyles, width int) string {
 	}
 
 	// Scroll indicator
-	if len(gp.items) > gp.maxVisible {
-		pct := float64(gp.scrollOff) / float64(len(gp.items)-gp.maxVisible) * 100
+	if len(gp.items) > visibleLimit {
+		pct := float64(start) / float64(len(gp.items)-visibleLimit) * 100
 		barWidth := 20
 		fill := int(pct / 100 * float64(barWidth))
 		if fill < 0 {
@@ -397,5 +397,5 @@ func renderPicker(gp *genericPicker, styles appStyles, width int) string {
 	b.WriteString(styles.muted.Render("  ↑/↓ navigate · PgUp/PgDn page · / search · Enter select · Esc close"))
 	b.WriteString("\n")
 
-	return styles.panel.Width(width - 4).Render(b.String())
+	return styles.panel.Width(max(1, width-4)).MaxHeight(max(1, height-2)).Render(b.String())
 }

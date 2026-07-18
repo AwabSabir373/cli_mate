@@ -115,26 +115,26 @@ func (e *Engine) Decide(ctx context.Context, state *agentloop.RunState, bundle a
 	confidenceDelta := infoGain * (1 - remainingUncertainty)
 
 	return agentloop.ActionDecision{
-		KnowEnough:              knowEnough,
-		NeedMoreContext:         needContext,
-		CandidateActions:        scored,
-		SelectedAction:          selected,
-		CanParallelize:          canParallel,
-		CheapestSafeAction:      cheapest,
-		RecoveryActions:         recovery,
-		ActiveHypotheses:        activeHypotheses,
-		PrimaryHypothesis:       primaryHyp,
-		RejectedHypotheses:      rejectedHyps,
-		InformationGainEstimate: infoGain,
-		RemainingUncertainty:    remainingUncertainty,
-		VerificationReason:      verificationReason(selected, activeHypotheses),
+		KnowEnough:                knowEnough,
+		NeedMoreContext:           needContext,
+		CandidateActions:          scored,
+		SelectedAction:            selected,
+		CanParallelize:            canParallel,
+		CheapestSafeAction:        cheapest,
+		RecoveryActions:           recovery,
+		ActiveHypotheses:          activeHypotheses,
+		PrimaryHypothesis:         primaryHyp,
+		RejectedHypotheses:        rejectedHyps,
+		InformationGainEstimate:   infoGain,
+		RemainingUncertainty:      remainingUncertainty,
+		VerificationReason:        verificationReason(selected, activeHypotheses),
 		ConfidenceDeltaPrediction: confidenceDelta,
-		VerificationPlan:        verificationPlan(task, intent),
-		RequiresApproval:        requiresApproval,
-		Reason:                  reason(knowEnough, needContext, selected, cheapest, recovery, canParallel, requiresApproval, reviewerNotes),
-		InternalConfidence:      selected.Evaluation.Confidence,
-		ReviewerNotes:           reviewerNotes,
-		RejectedActions:         rejected,
+		VerificationPlan:          verificationPlan(task, intent),
+		RequiresApproval:          requiresApproval,
+		Reason:                    reason(knowEnough, needContext, selected, cheapest, recovery, canParallel, requiresApproval, reviewerNotes),
+		InternalConfidence:        selected.Evaluation.Confidence,
+		ReviewerNotes:             reviewerNotes,
+		RejectedActions:           rejected,
 	}, nil
 }
 
@@ -400,7 +400,7 @@ func compositeScore(routerScore float64, evaluation agentloop.ActionEvaluation) 
 	score += evaluation.ExpectedValue * 4
 	score += evaluation.Confidence * 2
 	score += evaluation.VerificationAbility
-	score += evaluation.InformationGain * 5  // Highest priority: information gain
+	score += evaluation.InformationGain * 5 // Highest priority: information gain
 	score += evaluation.ReversibilityBonus * 3
 	score -= evaluation.Risk * 1.5
 	score -= evaluation.TokenCost

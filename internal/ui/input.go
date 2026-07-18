@@ -85,6 +85,9 @@ func (a *App) submit() tea.Cmd {
 	}
 
 	if strings.HasPrefix(text, "/") {
+		if text == "/exit" || text == "/quit" {
+			return tea.Quit
+		}
 		a.runCommand(text)
 		return nil
 	}

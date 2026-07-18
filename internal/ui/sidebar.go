@@ -89,18 +89,9 @@ func (s *Sidebar) Render(width int, height int, styles appStyles) string {
 		return ""
 	}
 
-	sidebarWidth := width
-	if sidebarWidth < 20 {
-		sidebarWidth = 20
-	}
+	sidebarWidth := max(1, width)
 
 	var sections []string
-
-	// Workspace/session header
-	header := s.renderHeader(styles)
-	if header != "" {
-		sections = append(sections, header)
-	}
 
 	// Session info section
 	section := s.renderSessionInfo(styles)
@@ -140,25 +131,22 @@ func (s *Sidebar) Render(width int, height int, styles appStyles) string {
 		return ""
 	}
 
-	content := strings.Join(sections, "\n\n")
-
-	// Pad to fill height if needed
-	lines := strings.Split(content, "\n")
-	for len(lines) < height-2 {
-		lines = append(lines, "")
+	lines := strings.Split(strings.Join(sections, "\n\n"), "\n")
+	contentWidth := max(1, sidebarWidth-2)
+	for i := range lines {
+		lines[i] = fitStyledLine(lines[i], contentWidth)
 	}
-	content = strings.Join(lines, "\n")
+	if height > 0 && len(lines) > height {
+		lines = lines[:height]
+	}
+	content := strings.Join(lines, "\n")
 
 	// Border consolidation: sidebar uses no internal border.
 	// Borders are applied only at the layout composition tier (the outer panel).
 	return styles.sidebarPanel.
-		Width(sidebarWidth).
+		Width(max(1, sidebarWidth-2)).
 		Height(height).
 		Render(content)
-}
-
-func (s *Sidebar) renderHeader(styles appStyles) string {
-	return styles.sidebarTitle.Render("cli_mate")
 }
 
 func (s *Sidebar) renderSessionInfo(styles appStyles) string {
@@ -229,5 +217,5 @@ func (s *Sidebar) renderGitStatus(styles appStyles) string {
 }
 
 func (s *Sidebar) renderHints(styles appStyles) string {
-	return styles.muted.Render("Ctrl+B toggle · D detail")
+	return styles.muted.Render("Ctrl+B hide · D details")
 }

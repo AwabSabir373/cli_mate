@@ -18,7 +18,7 @@ func newVersionCommand() *cobra.Command {
 		Use:   "version",
 		Short: "Print version information",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("goai %s (commit: %s, built: %s, go: %s)\n",
+			fmt.Printf("cli_mate %s (commit: %s, built: %s, go: %s)\n",
 				version, commit, date, runtime.Version())
 		},
 	}

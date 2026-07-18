@@ -41,3 +41,10 @@ func TestRouterSelectsMatchingCapability(t *testing.T) {
 		t.Fatalf("expected grep, got %s", candidates[0].Tool.Name)
 	}
 }
+
+func TestSemanticReplacementToolIsClassifiedAsMutation(t *testing.T) {
+	descriptor := inferDescriptor(fakeTool{name: "replace_go_symbol", desc: "replace a function body"}.Definition())
+	if !descriptor.Mutates || descriptor.SupportsParallel || descriptor.Risk < agentloop.RiskLocalEdit {
+		t.Fatalf("unsafe semantic replacement descriptor: %+v", descriptor)
+	}
+}

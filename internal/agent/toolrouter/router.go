@@ -223,7 +223,7 @@ func inferDescriptor(def tools.Definition) agentloop.ToolDescriptor {
 		desc.Capabilities = append(desc.Capabilities, "git", "diff", "checkpoint")
 		desc.Risk = agentloop.RiskCommand
 	}
-	if strings.Contains(name, "edit") || strings.Contains(name, "write") || strings.Contains(name, "patch") || strings.Contains(name, "commit") {
+	if strings.Contains(name, "edit") || strings.Contains(name, "write") || strings.Contains(name, "patch") || strings.Contains(name, "replace") || strings.Contains(name, "rename") || strings.Contains(name, "delete") || strings.Contains(name, "commit") {
 		desc.Mutates = true
 		desc.Risk = maxRisk(desc.Risk, agentloop.RiskLocalEdit)
 		desc.SupportsParallel = false

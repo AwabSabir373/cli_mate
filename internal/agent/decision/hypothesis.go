@@ -33,7 +33,7 @@ func (he *HypothesisEngine) Generate(task *agentloop.TaskNode, bundle agentloop.
 	for i := range hypotheses {
 		h := &hypotheses[i]
 		h.ID = fmt.Sprintf("hyp-%d", i+1)
-			h.InformationGain = heuristicInfoGain(h, unknownFacts)
+		h.InformationGain = heuristicInfoGain(h, unknownFacts)
 		h.Confidence = clamp(h.Probability*0.6+h.InformationGain*0.4, 0, 1)
 		if h.State == "" {
 			h.State = agentloop.HypothesisUnknown

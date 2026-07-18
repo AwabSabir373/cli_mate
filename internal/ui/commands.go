@@ -4,16 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/atotto/clipboard"
 
-	"cli_mate/internal/agent"
 	"cli_mate/internal/config"
 	"cli_mate/internal/providers/registry"
-	"cli_mate/internal/update"
 	"cli_mate/internal/usercommands"
 	"cli_mate/pkg/crypto"
 )
@@ -42,9 +38,6 @@ func (a *App) runCommand(raw string) {
 		a.log = nil
 	case "status":
 		a.appendLog("system", a.status())
-	case "providers":
-		a.setInput("/provider ")
-		a.appendLog("system", "Choose one provider from the selector, then press Tab or Enter.")
 	case "open":
 		a.openFile(args)
 	case "provider":
@@ -53,38 +46,14 @@ func (a *App) runCommand(raw string) {
 		a.setModel(args)
 	case "theme":
 		a.setTheme(args)
-	case "api-key":
-		a.setAPIKey(args)
-	case "max-tokens":
-		a.setMaxTokens(args)
-	case "base-url":
-		a.setBaseURL(args)
-	case "connect":
-		a.connect()
-	case "approve":
+	case "permissions":
 		a.toggleAutoApprove()
 	case "undo":
 		a.undoLastEdit()
 	case "copy":
 		a.copyLastResponse()
-	case "review":
-		a.appendLog("system", "Ask the AI to review code changes by typing your request. The agent has access to review/diff tools.")
-	case "diff":
-		a.appendLog("system", "Ask the AI to show a diff by typing your request. The agent has access to diff tools.")
-	case "commit":
-		if len(args) == 0 {
-			a.appendLog("error", "Usage: /commit <message>")
-		} else {
-			a.appendLog("system", fmt.Sprintf("Use the commit tool with message: %s", strings.Join(args, " ")))
-		}
 	case "compact":
 		a.compactConversation()
-	case "skills":
-		a.appendLog("system", "The agent has access to skills system. Ask it to discover or load skills.")
-	case "update":
-		a.checkForUpdate()
-	case "style":
-		a.setStyle(args)
 	case "setup":
 		// Launch onboarding wizard
 		if a.onboarding != nil {
@@ -108,49 +77,6 @@ func (a *App) runCommand(raw string) {
 			a.mcpManager.show()
 			a.appendLog("system", "MCP server manager opened.")
 		}
-	case "mcp_server":
-		if a.mcpManager != nil {
-			mcpDir := filepath.Join(".cli_mate", "mcp")
-			mcpFile := filepath.Join(mcpDir, "mcp.yml")
-
-			// Load or create default mcp.yml
-			cfg, err := config.LoadCustomMCPConfig(mcpFile)
-			if err != nil {
-				if os.IsNotExist(err) {
-					cfg, err = config.DefaultCustomMCPConfig()
-					if err != nil {
-						a.appendLog("error", fmt.Sprintf("Failed to create default MCP config: %v", err))
-						return
-					}
-					if err := config.SaveCustomMCPConfig(mcpFile, cfg); err != nil {
-						a.appendLog("error", fmt.Sprintf("Failed to create mcp.yml: %v", err))
-						return
-					}
-					a.appendLog("system", "Created default .cli_mate/mcp/mcp.yml")
-				} else {
-					a.appendLog("error", fmt.Sprintf("Failed to load mcp.yml: %v", err))
-					return
-				}
-			} else if cfg.IsLegacyGeneratedDefault() {
-				cfg, err = config.DefaultCustomMCPConfig()
-				if err != nil {
-					a.appendLog("error", fmt.Sprintf("Failed to migrate default MCP config: %v", err))
-					return
-				}
-				if err := config.SaveCustomMCPConfig(mcpFile, cfg); err != nil {
-					a.appendLog("error", fmt.Sprintf("Failed to migrate mcp.yml: %v", err))
-					return
-				}
-				a.appendLog("system", "Migrated default MCP config to cli_mcp.")
-			}
-
-			// Update internal config and manager with custom servers
-			a.cfg.MCP = cfg.ConvertToInternal()
-			a.cfg.Save()
-			a.mcpManager.loadFromConfig(a.cfg)
-			a.mcpManager.show()
-			a.appendLog("system", fmt.Sprintf("Loaded custom MCP config: %s (v%s)", cfg.Name, cfg.Version))
-		}
 	case "prs":
 		// Open PR status display
 		if a.prStatus != nil {
@@ -162,22 +88,6 @@ func (a *App) runCommand(raw string) {
 		if a.prStatus != nil {
 			a.prStatus.show()
 			a.appendLog("system", "Pull request status. Navigate with ↑/↓, Esc to close.")
-		}
-	case "spec":
-		// Open spec mode
-		if a.specMode != nil {
-			if len(args) >= 1 {
-				title := strings.Join(args, " ")
-				a.specMode.start(title, "")
-				a.specMode.show()
-				a.appendLog("system", fmt.Sprintf("Spec mode started: %s. Use /spec-add to add constraints.", title))
-			} else {
-				if a.specMode.isActive() {
-					a.specMode.show()
-				} else {
-					a.appendLog("system", "Usage: /spec <title> to start a new specification")
-				}
-			}
 		}
 	case "doctor":
 		// Open diagnostics panel
@@ -214,12 +124,6 @@ func (a *App) runCommand(raw string) {
 		} else if a.sessionCtrls != nil {
 			a.sessionCtrls.show()
 			a.sessionCtrls.action = actionRename
-		}
-	case "output":
-		// Open command output viewer
-		if a.commandOutput != nil {
-			a.commandOutput.show()
-			a.appendLog("system", "Command output viewer opened.")
 		}
 	default:
 		a.appendLog("error", fmt.Sprintf("Unknown command /%s. Type /help.", command))
@@ -280,8 +184,10 @@ func (a *App) setProvider(args []string) {
 
 	// Custom provider: base URL is required, API key is optional
 	if spec.Name == "custom" && profile.BaseURL == "" {
-		a.setInput("/base-url ")
-		a.appendLog("system", "Enter your endpoint base URL, then press Enter. Example: https://api.my-provider.com/v1")
+		if a.onboarding != nil {
+			a.onboarding.start()
+		}
+		a.appendLog("system", "Custom providers require guided setup. Enter the endpoint in the setup wizard.")
 		return
 	}
 
@@ -320,7 +226,7 @@ func (a *App) setModel(args []string) {
 		return
 	}
 
-	a.appendLog("system", "Model set to "+model+". Use /connect when ready.")
+	a.appendLog("system", "Model set to "+model+". Send a message when ready.")
 }
 
 func (a *App) saveCustomModel(text string) {
@@ -390,68 +296,17 @@ func (a *App) saveAPIKey(value string) {
 		a.appendLog("system", "API key saved. Choose a model, then press Tab or Enter.")
 	} else {
 		a.input = ""
-		a.appendLog("system", "API key saved. Use /connect when ready.")
+		a.appendLog("system", "API key saved. Send a message when ready.")
 	}
-}
-
-func (a *App) setAPIKey(args []string) {
-	if len(args) > 0 {
-		a.saveAPIKey(strings.Join(args, " "))
-		return
-	}
-	a.input = ""
-	a.inputMode = "api_key"
-	a.appendLog("system", "Paste your API key, then press Enter. It is saved in your config.")
-}
-
-func (a *App) setBaseURL(args []string) {
-	if len(args) == 0 {
-		a.appendLog("error", "Usage: /base-url <url>")
-		return
-	}
-
-	baseURL := strings.Join(args, "")
-	_ = a.cfg.UpdateActive(func(profile *config.Profile) {
-		profile.BaseURL = baseURL
-	})
-	a.saveSettings()
-	a.disconnect()
-	a.appendLog("system", "Base URL set to "+baseURL+".")
-}
-
-func (a *App) setMaxTokens(args []string) {
-	const maxTokenLimit = 2000000
-
-	if len(args) != 1 {
-		a.appendLog("error", "Usage: /max-tokens <integer>")
-		return
-	}
-
-	val, err := strconv.Atoi(args[0])
-	if err != nil || val <= 0 {
-		a.appendLog("error", "Invalid value for max-tokens. Must be a positive integer.")
-		return
-	}
-	if val > maxTokenLimit {
-		a.appendLog("error", fmt.Sprintf("Invalid value for max-tokens. Must be at most %d.", maxTokenLimit))
-		return
-	}
-
-	_ = a.cfg.UpdateActive(func(profile *config.Profile) {
-		profile.MaxTokens = val
-	})
-	a.saveSettings()
-	a.disconnect()
-	a.appendLog("system", fmt.Sprintf("Max tokens set to %d.", val))
 }
 
 func (a App) status() string {
 	profile := a.activeProfile()
-	keyState := "not set"
-	if profile.APIKey != "" {
-		keyState = "set"
+	permissions := "ask"
+	if profile.AutoApprove {
+		permissions = "auto"
 	}
-	return fmt.Sprintf("provider=%s model=%s base_url=%s api_key=%s", fallback(profile.Provider, "not set"), fallback(profile.Model, "not set"), fallback(profile.BaseURL, "not set"), keyState)
+	return fmt.Sprintf("provider=%s model=%s workspace=%s permissions=%s", fallback(profile.Provider, "not set"), fallback(profile.Model, "not set"), fallback(a.workspaceRoot, "not set"), permissions)
 }
 
 func (a *App) copyLastResponse() {
@@ -509,31 +364,19 @@ func commandHelp() []string {
 		"/setup                  run the interactive setup wizard",
 		"/resume                 resume a previous session",
 		"/mcp                    manage MCP servers",
-		"/mcp_server             open custom mcp",
 		"/prs                    show pull request status",
-		"/spec <title>           start specification-driven development",
 		"/doctor                 run system diagnostics",
 		"/attach <path>          attach an image to the conversation",
 		"/session                open session controls (rename/export/rewind)",
 		"/rename <name>          rename the current session",
-		"/output                 view command output history",
 		"/provider               choose one active provider",
 		"/model                  choose model for active provider",
 		"/theme                  choose terminal theme",
-		"/api-key                set or update API key",
-		"/max-tokens <value>     set custom context level limit",
-		"/base-url <url>         set local provider URL, useful for Ollama",
-		"/connect                validate and connect active provider",
-		"/approve                toggle auto-approve for tool execution",
+		"/permissions            toggle tool auto-approval",
 		"/status                 show active provider configuration",
 		"/clear                  clear the console",
-		"/review                 review code changes",
-		"/diff                   show git diff",
-		"/commit <message>       create a git commit",
 		"/compact                summarize older messages to save context",
-		"/skills                 list available skills",
-		"/update                 check for new version",
-		"/style                  set response style (concise/explanatory/review)",
+		"/exit                   quit cli_mate",
 		"",
 		"Keyboard shortcuts:",
 		"  Up/Down       cycle through prompt history",
@@ -556,7 +399,7 @@ func providerList() string {
 }
 
 func (a *App) matchingCommands(prefix string) []string {
-	commands := []string{"/help", "/open", "/copy", "/setup", "/resume", "/mcp", "/mcp_server", "/prs", "/pr", "/spec", "/doctor", "/attach", "/session", "/rename", "/output", "/provider", "/model", "/theme", "/api-key", "/max-tokens", "/base-url", "/connect", "/approve", "/status", "/clear", "/review", "/diff", "/commit", "/compact", "/skills", "/update", "/style"}
+	commands := []string{"/help", "/open", "/copy", "/undo", "/setup", "/resume", "/mcp", "/prs", "/doctor", "/attach", "/session", "/rename", "/provider", "/model", "/theme", "/permissions", "/status", "/clear", "/compact", "/exit"}
 	// Add user commands to autocomplete
 	for _, cmd := range a.userCommands {
 		commands = append(commands, "/"+cmd.Name)
@@ -568,34 +411,6 @@ func (a *App) matchingCommands(prefix string) []string {
 		}
 	}
 	return matches
-}
-
-// checkForUpdate queries GitHub for the latest release and reports the result.
-func (a *App) checkForUpdate() {
-	a.appendLog("system", "Checking for updates...")
-	go func() {
-		result := update.CheckForUpdate(context.Background())
-		msg := update.FormatCheckResult(result)
-		a.appendLog("system", msg)
-	}()
-}
-
-// setStyle sets the response style for the agent.
-func (a *App) setStyle(args []string) {
-	if len(args) == 0 {
-		a.appendLog("system", "Available styles: concise, explanatory, review")
-		a.appendLog("system", "Usage: /style <style-name>")
-		return
-	}
-
-	style := args[0]
-	if !agent.IsValidStyle(style) {
-		a.appendLog("error", fmt.Sprintf("Unknown style %q. Available: concise, explanatory, review", style))
-		return
-	}
-
-	a.responseStyle = agent.ResponseStyle(style)
-	a.appendLog("system", fmt.Sprintf("Response style set to %s.", style))
 }
 
 // tryUserCommand checks if the command name matches a user-defined command

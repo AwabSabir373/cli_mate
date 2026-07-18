@@ -69,6 +69,7 @@ func newRootCommand() *cobra.Command {
 				return runDaemon(ctx, cfg, log)
 			}
 
+			ui.BuildVersion = version
 			app := ui.NewApp(cfg, store)
 			program := tea.NewProgram(app)
 			app.SetProgram(program)

@@ -121,18 +121,18 @@ const (
 )
 
 type Hypothesis struct {
-	ID                   string
-	Description          string
-	SupportingEvidence   []string
-	MissingEvidence      []string
+	ID                    string
+	Description           string
+	SupportingEvidence    []string
+	MissingEvidence       []string
 	ContradictingEvidence []string
-	Probability          float64
-	VerificationCost     float64
-	Risk                 RiskLevel
-	InformationGain      float64
-	VerificationMethod   string
-	Confidence           float64
-	State                HypothesisState
+	Probability           float64
+	VerificationCost      float64
+	Risk                  RiskLevel
+	InformationGain       float64
+	VerificationMethod    string
+	Confidence            float64
+	State                 HypothesisState
 }
 
 type EvidenceRef struct {
@@ -185,24 +185,24 @@ type DiffCheck struct {
 }
 
 type TaskNode struct {
-	ID               string
-	ParentID         string
-	Goal             string
-	Status           TaskStatus
-	Priority         int
-	Dependencies     []string
-	Risk             RiskLevel
-	Confidence       float64
-	Evidence         []EvidenceRef
-	CandidateTools   []string
-	Verification     VerificationSpec
-	SuccessCriteria  string
-	FailureCriteria  string
-	HypothesisIDs    []string
-	Attempts         int
-	MaxAttempts      int
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID              string
+	ParentID        string
+	Goal            string
+	Status          TaskStatus
+	Priority        int
+	Dependencies    []string
+	Risk            RiskLevel
+	Confidence      float64
+	Evidence        []EvidenceRef
+	CandidateTools  []string
+	Verification    VerificationSpec
+	SuccessCriteria string
+	FailureCriteria string
+	HypothesisIDs   []string
+	Attempts        int
+	MaxAttempts     int
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type TaskGraph struct {
@@ -407,26 +407,26 @@ type RetryPolicy struct {
 }
 
 type ActionDecision struct {
-	KnowEnough              bool
-	NeedMoreContext         bool
-	CandidateActions        []CandidateAction
-	SelectedAction          CandidateAction
-	CanParallelize          bool
-	CheapestSafeAction      CandidateAction
-	RecoveryActions         []CandidateAction
-	ActiveHypotheses        []Hypothesis
-	PrimaryHypothesis       *Hypothesis
-	RejectedHypotheses      []Hypothesis
-	InformationGainEstimate float64
-	RemainingUncertainty    float64
-	VerificationReason      string
+	KnowEnough                bool
+	NeedMoreContext           bool
+	CandidateActions          []CandidateAction
+	SelectedAction            CandidateAction
+	CanParallelize            bool
+	CheapestSafeAction        CandidateAction
+	RecoveryActions           []CandidateAction
+	ActiveHypotheses          []Hypothesis
+	PrimaryHypothesis         *Hypothesis
+	RejectedHypotheses        []Hypothesis
+	InformationGainEstimate   float64
+	RemainingUncertainty      float64
+	VerificationReason        string
 	ConfidenceDeltaPrediction float64
-	VerificationPlan        VerificationSpec
-	RequiresApproval        bool
-	Reason                  string
-	InternalConfidence      float64
-	ReviewerNotes           []string
-	RejectedActions         []CandidateAction
+	VerificationPlan          VerificationSpec
+	RequiresApproval          bool
+	Reason                    string
+	InternalConfidence        float64
+	ReviewerNotes             []string
+	RejectedActions           []CandidateAction
 }
 
 type RunState struct {

@@ -25,11 +25,11 @@ var darkPalette = palette{
 	muted:     "#9a9aa2", // secondary text — lifted so it clearly out-ranks faint
 	faint:     "#8a8a92", // hints/metadata — nudged up to separate from faintest
 	faintest:  "#7c7c82", // line numbers/separators — pinned at the WCAG-AA floor on the dark panel
-	accent:    "#caff3f", // original bright lime (the brand accent)
+	accent:    "#2dd4bf", // bright teal brand accent
 	green:     "#5dd1a4",
 	red:       "#ff7a7a",
 	amber:     "#ffc25c",
-	blue:      "#7db4ff",
+	blue:      "#5eead4",
 	gitAdd:    "#7db87a",
 	gitDel:    "#b87a7a",
 	addBg:     "#18352c",
@@ -41,7 +41,7 @@ var darkPalette = palette{
 	addInk:    "#bdeed7",
 	delInk:    "#f2c4c4",
 	onAccent:  "#000000",
-	cardRun:   "#5a6b2e",
+	cardRun:   "#176b65",
 	cardErr:   "#6b3434",
 	cardPerm:  "#6b5a2e",
 }

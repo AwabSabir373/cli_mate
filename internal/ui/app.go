@@ -155,15 +155,10 @@ type App struct {
 	permissionPrompt *permissionPrompt
 	askUserState     *askUserState
 	renderCache      *renderCache
-	// Unwired component fields (created but need integration)
-	viewport          *viewport
-	flushBatcher      *flushBatcher
-	hoverManager      *hoverManager
-	bgTerminalManager *bgTerminalManager
-	planStepDetail    *planStepDetail
+	viewport         *viewport
+	hoverManager     *hoverManager
 	// New major feature components
 	onboarding    *onboardingState
-	composer      *composerState
 	sessionPicker *sessionPicker
 	mcpManager    *mcpManager
 	// Animation state (ported from zero model.go)
@@ -193,12 +188,10 @@ type App struct {
 	specMode            *specMode
 	subchatManager      *subchatManager
 	// Remaining feature components (phase 2)
-	autocomplete  *autocompleteState
 	picker        *genericPicker
 	sessionCtrls  *sessionControls
 	sessionTitle  *sessionTitleGenerator
 	commandOutput *commandOutputView
-	startup       *startupState
 	imageAttach   *imageAttachState
 	doctor        *doctorView
 
@@ -254,6 +247,9 @@ type approvalRequest struct {
 	call     tools.Call
 	response chan bool
 }
+
+// BuildVersion is set by the CLI entrypoint from release linker metadata.
+var BuildVersion = "dev"
 
 func NewApp(cfg *config.Config, store storage.SessionStore) App {
 	renderer, err := NewRenderer(100)
@@ -315,14 +311,10 @@ func NewApp(cfg *config.Config, store storage.SessionStore) App {
 		sidebar:          sidebar,
 		renderCache:      newRenderCache(30*time.Second, 200),
 		// New wired components
-		viewport:          newViewport(),
-		flushBatcher:      newFlushBatcher(),
-		hoverManager:      newHoverManager(),
-		bgTerminalManager: newBGTerminalManager(),
-		planStepDetail:    newPlanStepDetail(),
+		viewport:     newViewport(),
+		hoverManager: newHoverManager(),
 		// New major feature components
 		onboarding:    newOnboardingState(),
-		composer:      newComposerState(),
 		sessionPicker: newSessionPicker(),
 		mcpManager:    newMCPManager(),
 		// Additional feature components
@@ -332,12 +324,10 @@ func NewApp(cfg *config.Config, store storage.SessionStore) App {
 		specMode:              newSpecMode(),
 		subchatManager:        newSubchatManager(),
 		// Remaining feature components (phase 2)
-		autocomplete:  newAutocompleteState(),
 		picker:        newGenericPicker(),
 		sessionCtrls:  newSessionControls(),
 		sessionTitle:  newSessionTitleGenerator(),
 		commandOutput: newCommandOutputView(),
-		startup:       newStartupState(),
 		imageAttach:   newImageAttachState(),
 		doctor:        newDoctorView(),
 	}
@@ -455,6 +445,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		previousMessageCount := len(a.messages)
 		completionDetails := a.completionDetails(msg.messages, previousMessageCount, msg.err)
 		a.loading = false
+		a.pending = false
+		a.runCancel = nil
+		a.activeRunID = 0
+		a.spinnerTicking = false
 		a.loadingFrame = 0
 		a.loadingSteps = nil
 		a.currentStepText = ""
@@ -652,14 +646,6 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Route events to command output overlay
 		if a.commandOutput != nil && a.commandOutput.isVisible() {
 			a.commandOutput.handleKey(msg.String())
-			return a, nil
-		}
-
-		// Route events to startup overlay
-		if a.startup != nil && a.startup.isVisible() {
-			if a.startup.handleKey(msg.String()) {
-				return a, nil
-			}
 			return a, nil
 		}
 
@@ -964,28 +950,12 @@ func (a *App) disarmCancelConfirmation() {
 }
 
 func (a *App) handleCtrlC() tea.Cmd {
-	if !a.pending && a.input != "" && a.pendingApproval == nil {
-		a.clearComposer()
-		a.clearSuggestions()
-		a.disarmExitConfirmation()
-		return nil
-	}
-	if a.exitConfirmActive {
-		a.disarmExitConfirmation()
-		a.cancelRun()
-		a.exiting = true
-		if len(a.flushRunIDs) > 0 {
-			return nil
-		}
-		return tea.Quit
-	}
+	// Ctrl+C is the unconditional emergency exit. Never wait for a transcript
+	// flush or a stuck provider/MCP goroutine: cancelling the run is best-effort,
+	// while returning Quit must happen immediately so the terminal is restored.
 	a.cancelRun()
-	a.exitConfirmActive = true
-	a.exitConfirmSeq++
-	seq := a.exitConfirmSeq
-	return tea.Tick(ctrlCExitConfirmDuration, func(time.Time) tea.Msg {
-		return exitConfirmExpiredMsg{seq: seq}
-	})
+	a.exiting = true
+	return tea.Quit
 }
 
 func (a *App) handleGitSweepMsg(msg gitSweepMsg) *App {
@@ -1099,19 +1069,9 @@ func (a *App) rememberInput(value string) {
 }
 
 func (a *App) clearComposer() {
-	if a.composer != nil {
-		a.composer.setText("")
-		a.composer.selection = composerSelectionState{}
-		a.composer.pastePreviews = nil
-	}
 }
 
 func (a *App) clearSuggestions() {
-	if a.autocomplete != nil {
-		a.autocomplete.active = false
-		a.autocomplete.suggestions = nil
-		a.autocomplete.cursor = 0
-	}
 }
 
 func (a *App) queueMessage(text string) {
